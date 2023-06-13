@@ -5,12 +5,6 @@ Created on Fri Jun  9 13:03:40 2023
 @author: ctodd
 """
 
-#import pandas as pd
-#import pdb
-#from pathlib import Path
-#from models import load_smarteole_floris
-#from flasc import floris_tools as ftools
-
 import matplotlib.pyplot as plt
 import numpy as np
 import re # can probably figure out a way to not use this
@@ -396,7 +390,7 @@ class energyGain():
         return None
     
     # Better comments later
-    def matrixOfMetrics(self, metric, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
+    def matrixOfMetrics(self, metricMethod, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
         """
         For wind-condition-bin-specific metrics
         """
@@ -419,7 +413,7 @@ class energyGain():
                 speed = windSpeedBins[j]
                 upperSpeed = speed + windSpeedSpecs[2]
                 
-                y_ij = self.metric([direction, upperDirection],
+                y_ij = metricMethod([direction, upperDirection],
                                    [speed, upperSpeed])
                 if type(y_ij) is str:
                     y_ij = None
@@ -437,32 +431,6 @@ class energyGain():
         windSpeedSpecs: list of length 3, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
         """
-        # windDirectionBins = np.arange(windDirectionSpecs[0],
-        #                               windDirectionSpecs[1],
-        #                               windDirectionSpecs[2])
-        # windSpeedBins = np.arange(windSpeedSpecs[0],
-        #                           windSpeedSpecs[1],
-        #                           windSpeedSpecs[2])
-        # I = windDirectionBins.size
-        # J = windSpeedBins.size
-        # heatmapMatrix = np.full((I, J), None, dtype=float)
-        
-        
-        # for i in range(I):
-        #     direction = windDirectionBins[i]
-        #     upperDirection = direction + windDirectionSpecs[2]
-            
-        #     for j in range(J):
-        #         speed = windSpeedBins[j]
-        #         upperSpeed = speed + windSpeedSpecs[2]
-                
-        #         y_ij = self.percentPowerGain([direction, upperDirection],
-        #                                     [speed, upperSpeed])
-        #         if type(y_ij) is str:
-        #             y_ij = None
-                
-        #         heatmapMatrix[i,j] = y_ij
-        
         
         resultDict = self.matrixOfMetrics("percentPowerGain",
                                           windDirectionSpecs,
@@ -488,7 +456,6 @@ class energyGain():
         plt.yticks(yTicks)
         ax.set_xticklabels(xLabels)
         ax.set_yticklabels(yLabels)
-        #fig.colorbar(heatmap)
         plt.show()
         
         
