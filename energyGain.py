@@ -5,6 +5,7 @@ Created on Fri Jun  9 13:03:40 2023
 @author: ctodd
 """
 
+import pdb
 import matplotlib.pyplot as plt
 import numpy as np
 import re # can probably figure out a way to not use this
@@ -420,10 +421,11 @@ class energyGain():
                 
                 dataMatrix[i,j] = y_ij
         
-        return {"data": dataMatrix, "directions": windDirectionBins, "speeds": windSpeedSpecs}
+        return {"data": dataMatrix, "directions": windDirectionBins, "speeds": windSpeedBins}
         
     
     # Change this name later
+    # this does NOT work right now
     def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], cmap='hot'):
         """
         windDirectionSpecs: list of length 3, specifications for wind direction
@@ -432,7 +434,7 @@ class energyGain():
             [lower bound (inclusive), upper bound (exclusive), bin width]
         """
         
-        resultDict = self.matrixOfMetrics("percentPowerGain",
+        resultDict = self.matrixOfMetrics(self.percentPowerGain,
                                           windDirectionSpecs,
                                           windSpeedSpecs)
         
@@ -448,14 +450,17 @@ class energyGain():
         fig.colorbar(heatmap) # legend
         
         xTicks = np.arange(0,I+1,1)-0.5
-        xLabels = np.append(windDirectionBins, windDirectionSpecs[1])
-        yTicks = np.arange(0,J+1,1)-0.5
-        yLabels = np.append(windSpeedBins, windSpeedSpecs[1])
-        
         plt.xticks(xTicks)
-        plt.yticks(yTicks)
+        xLabels = np.append(windDirectionBins, windDirectionSpecs[1])
         ax.set_xticklabels(xLabels)
+        
+        #breakpoint()
+        
+        yTicks = np.arange(0,J+1,1)-0.5
+        plt.yticks(yTicks)
+        yLabels = np.append(windSpeedBins, windSpeedSpecs[1])
         ax.set_yticklabels(yLabels)
+        
         plt.show()
         
         
