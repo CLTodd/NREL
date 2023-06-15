@@ -5,7 +5,7 @@ Created on Fri Jun  9 13:03:40 2023
 @author: ctodd
 """
 
-import pdb
+#import pdb
 import matplotlib.pyplot as plt
 import numpy as np
 import re # can probably figure out a way to not use this
@@ -239,11 +239,11 @@ class energyGain():
         
         return (Rpc - Rpb)/Rpb
     
-    def changeInAEP(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1],
+    def aepGain(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1],
                     hours=8760, AEPmethod=1, absolute=False, useReference=True):
         
         """
-        'Annual' energy production based on wind condition bin frequencies.
+        'Annual' energy production gain based on wind condition bin frequencies.
         
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
@@ -300,8 +300,23 @@ class energyGain():
                 
                 freqTracker += freq
                 
-                # Summation formula differs depending on AEP method
-                if AEPmethod==1:
+                # If we aren't using reference turbines, the absolute and 
+                # relative AEP formulas are the same for both methods
+                if not useReference:
+                    # Set average power to one
+                    avgPwr = 1
+                    
+                    # Compute change metric
+                    avgPwrTestContr = self.averagePower([direction, upperDirection],
+                                                    [speed, upperSpeed],
+                                                    self.testTurbines, "controlled")
+                    avgPwrTestBase = self.averagePower([direction, upperDirection],
+                                                   [speed, upperSpeed],
+                                                   self.testTurbines, "baseline")
+                    changeMetric = avgPwrTestContr - avgPwrTestBase
+                    
+                # With Reference turbines, summation formula differs depending on AEP method
+                elif AEPmethod==1:
                     changeMetric = self.percentPowerGain([direction, upperDirection],
                                                          [speed, upperSpeed])
                 
@@ -325,30 +340,34 @@ class energyGain():
                 # Increment the absolute sum
                 absoluteSum += ( freq * changeMetric * avgPwr)
                 
-                # Increment the normalizing constant for % change AEP  
-                if AEPmethod==1 and absolute==False:
-                    normalizingConstant += (freq*changeMetric)
-                elif AEPmethod==2 and absolute==False:
-                    pwrRatio = self.powerRatio([direction, upperDirection],
-                                               [speed, upperSpeed],"baseline")
-                    normalizingConstant += (freq*pwrRatio*avgPwr)
+                 
+                if not absolute:
+                    # Increment the normalizing constant for % gain AEP
+                    if not useReference:
+                        # If we aren't using reference turbines, % gain AEP is the same for both AEP methods
+                        normalizingConstant += (freq*avgPwrTestBase)
+                    elif AEPmethod==1:
+                        normalizingConstant += (freq*changeMetric)
+                    else: #(AEPmethod==2)
+                        pwrRatio = self.powerRatio([direction, upperDirection],
+                                                   [speed, upperSpeed],"baseline")
+                        normalizingConstant += (freq*pwrRatio*avgPwr)
         
         print(freqTracker) # frequency check
         
-        # Percent change AEP
-        if not absolute:
-            if normalizingConstant == 0:
-                # This seems like an imperfect solution
-                print("Normalizing constant is 0, returning absolute AEP instead")
-            else:
-                pctAEP = 100*(absoluteSum/normalizingConstant)
-                print(f"{pctAEP}%")
-                return pctAEP
+        # Percent AEP gain results
+        if normalizingConstant == 0:
+            # This seems like an imperfect solution
+            print("Normalizing constant is 0, returning absolute AEP instead")
+        else:
+            pctGainAEP = 100*(absoluteSum/normalizingConstant)
+            print(f"{pctGainAEP}%")
+            return pctGainAEP
         
-        # Absolute change AEP
-        AEP = hours*absoluteSum
-        print(f"{AEP} kWh")
-        return AEP
+        # Absolute AEP Gain results
+        aepGain = hours*absoluteSum
+        print(f"{aepGain} kWh")
+        return aepGain
     
     # Change this name later
     def plot(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
