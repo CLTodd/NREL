@@ -449,32 +449,30 @@ class energyGain():
         dataMatrixT = np.transpose(dataMatrix)
         
         return {"data": dataMatrixT, "directions": windDirectionBins, "speeds": windSpeedBins}
-        
-    
-    # Change this name later
-    #pct power gain heat map
+         
+    # Change this name later, probably
+    # pct power gain heat map
     # this works but is not done
-    def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
+    # fix the title thing
+    def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], heatmapMatrix=None, colorMap="seismic", title="Percent Power Gain"):
         """
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
         windSpeedSpecs: list of length 3, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
+        heatmapMatrix: can pass in a matrix of your metric of choice
         """
-        
-        resultDict = self.matrixOfMetrics(self.percentPowerGain,
-                                          windDirectionSpecs,
-                                          windSpeedSpecs)
-        
-        heatmapMatrix = resultDict["data"] 
-        I = heatmapMatrix.shape[0]
-        J = heatmapMatrix.shape[1]
-        
-        #windDirectionBins = resultDict["directions"]
-        #windSpeedBins = resultDict["speeds"]
+
+        # Compute matrix of data if needed
+        if heatmapMatrix is None:
+            heatmapMatrix = self.matrixOfMetrics(self.percentPowerGain,
+                                                 windDirectionSpecs,
+                                                 windSpeedSpecs)["data"]
             
         fig, ax = plt.subplots()
-        heatmap = plt.imshow(heatmapMatrix, cmap='plasma', interpolation=None, origin='lower')
+        heatmap = plt.imshow(heatmapMatrix, cmap=colorMap, 
+                             interpolation=None, origin='lower')
+        
         # Tick marks at multiples of 5 and 1
         ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
         ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
@@ -482,29 +480,13 @@ class energyGain():
         ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
         
         # Labels
-        ax.set_title("Percent Power Gain Heatmap")
+        ax.set_title(title)
         ax.set_xlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
         ax.set_ylabel("Wind Speed (m/s)")
 
         fig.colorbar(heatmap) # legend
-        
-        
-        #ax.xaxis.set_minor_locator(mticker.maxNLocator(I))
-        
-        #xTicks = np.arange(0,I+1,1)-0.5
-        #plt.xticks(xTicks)
-        #xLabels = np.append(windDirectionBins, windDirectionSpecs[1])
-        #ax.set_xticklabels(xLabels)
-        
-        #yTicks = np.arange(0,J+1,1)-0.5
-        #plt.yticks(yTicks)
-        #yLabels = np.append(windSpeedBins, windSpeedSpecs[1])
-        #ax.set_yticklabels(yLabels)
-        
+
         plt.show()
-        #ax.plot()
-        
-        
         
         return heatmapMatrix
         
