@@ -16,7 +16,7 @@ from flasc.dataframe_operations import dataframe_manipulations as dfm
 class energyGain():
     
     def __init__(self, df, dfUpstream, testTurbines=[], refTurbines=[],
-                 wdCol=None, wsCol=None):
+                 wdCol=None, wsCol=None, useReference=True):
         """
         testTurbines: list, turbine numbers to be considered test turbines
         refTurbines: list, turbine numbers to be considered reference turbines
@@ -24,6 +24,9 @@ class energyGain():
             Calculates a column named "wd" if None
         wsCol: string, name of the column in df to use for reference wind speed
             Calculates a column named "ws" if None
+        useReference: Boolean, wheter to compare Test turbines to Reference 
+            turbines (True) or Test turbines to themselves in control mode
+            versus baseline mode (False).
         """
         
         self.df = df
@@ -33,6 +36,7 @@ class energyGain():
         self.allTurbines = [int(re.sub("\D+","",colname)) for colname in list(df) if re.match('^pow_\d+', colname)]
         self.wdCol = wdCol
         self.wsCol = wsCol
+        self.useReference = useReference
         
         # Set the columns to be referenced for wind speed and direction if not given   
         if self.wdCol == None:
@@ -69,7 +73,8 @@ class energyGain():
         self.wdCol = "wd"
         return None
     
-    def powerRatio(self, windDirectionBin, windSpeedBin,controlMode,verbose=False):
+    def powerRatio(self, windDirectionBin, windSpeedBin, controlMode=None, 
+                   useReference = True, verbose = False):
         """
         Power ratio for a specific wind direction bin and wind speed bin. 
         
@@ -80,8 +85,22 @@ class energyGain():
             Calculates a column named "wd" if None
         wsToUse: string, name of the column with the reference wind speed.
             Calculates a column named "ws" if None
+        useReference: Boolean, wheter to compare Test turbines to Reference 
+            turbines (True) or Test turbines to themselves in control mode
+            versus baseline mode (False). Used for some methods.
         """
         # Assuming valid inputs for now
+        
+        # Wanted to add this to give flexibility to not use the reference for 
+        # one particular method, but part of me feels like this is just confusing 
+        # or a bad idea. Might take it away and just always use the object attribute
+        if useReference is None:
+            useReference = self.useReference
+            
+        if (useReference==True) and (controlMode is None):
+            sillyGoose = "Must specify control mode to use reference turbine information."
+            print(sillyGoose)
+            return sillyGoose
         
         # Set wind speed if necessary
         if self.wsCol==None:
@@ -92,15 +111,23 @@ class energyGain():
             self.setWD()
         
         # Calculate Ratio
-        numerator = self.averagePower(windDirectionBin,
-                                      windSpeedBin,
-                                      self.testTurbines,
-                                      controlMode=controlMode)
         
-        denominator = self.averagePower(windDirectionBin,
-                                        windSpeedBin,
-                                        self.referenceTurbines,
-                                        controlMode=controlMode)
+        if useReference:
+            numerator = self.averagePower(windDirectionBin, windSpeedBin,
+                                          self.testTurbines, controlMode=controlMode)
+            
+            denominator = self.averagePower(windDirectionBin, windSpeedBin,
+                                            self.referenceTurbines, controlMode=controlMode)
+            if verbose:
+                # Just a reminder, since the power ratio formula is different without reference turbines
+                print("Calculating ratio of average power during control and baseline modes for test turbines only.")
+        else:
+            numerator = self.averagePower(windDirectionBin, windSpeedBin,
+                                          self.testTurbines, controlMode="controlled")
+            
+            denominator = self.averagePower(windDirectionBin, windSpeedBin,
+                                          self.testTurbines, controlMode="baseline")
+        
         # If either of these are strings, 
         # there are no observations in this bin to calculate a ratio from
         if type(numerator) is str:
@@ -168,14 +195,16 @@ class energyGain():
      
         return avg
     
-    def changeInPowerRatio(self, windDirectionBin, windSpeedBin, verbose=False):
+    def changeInPowerRatio(self, windDirectionBin, windSpeedBin, useReference=None, verbose=False):
         """
         Change in Power Ratio for a specific wind direction bin and wind speed bin.
         
         windDirectionBin: list of length 2
         windSpeedBin: list of length 2
         """
-        
+        if useReference is None:
+            useReference = self.useReference
+            
         # Set wind speed if necessary
         if self.wsCol ==None:
             self.setWS()
@@ -183,35 +212,56 @@ class energyGain():
         # Set wind direction if necessary
         if self.wdCol ==None:
             self.setWD()
+
+        if not useReference: 
+            # Since the power ratio is define completely differently 
+            # when we aren't using reference turbines, I'm directly calling 
+            # the average power method to compute this (can't set denom=1)
+            # I think this is really important so I'm printing this regardless of verbose
+            FYI = "Change in power ratio is simply change in average power without reference turbines.\n"
+            FYI += "Returning change in average power. If this isn't what you want, set the useReference argument to True."        
+            print(FYI)
             
-        Rpc = self.powerRatio(windDirectionBin, windSpeedBin, "controlled")
-        Rpb = self.powerRatio(windDirectionBin, windSpeedBin, "baseline")
+            control = self.averagePower(windDirectionBin, windSpeedBin, "controlled")
+            baseline = self.averagePower(windDirectionBin, windSpeedBin, "baseline")
+        
+        # Typical power ratio formula if we are using test turbines
+        control = self.powerRatio(windDirectionBin, windSpeedBin, "controlled")
+        baseline = self.powerRatio(windDirectionBin, windSpeedBin, "baseline")
         
         # If either of these are strings, 
         # there are no observations in this bin to calculate a ratio from
-        if type(Rpc) is str:
-            sadMessage = Rpc + "Can't calculate power ratio for controlled mode."
+        if type(control) is str:
+            sadMessage = control + "Can't calculate power ratio for controlled mode."
             if verbose:
                 print(sadMessage)
             return sadMessage
         
-        if type(Rpb) is str:
-            sadMessage = Rpb + "Can't calculate power ratio for baseline mode."
+        if type(baseline) is str:
+            sadMessage = baseline + "Can't calculate power ratio for baseline mode."
             if verbose:
                 print(sadMessage)
             return sadMessage
         
-        return Rpc - Rpb
+        return control - baseline
         
-    def percentPowerGain(self, windDirectionBin, windSpeedBin, verbose=False):
+    def percentPowerGain(self, windDirectionBin, windSpeedBin, useReference=None, verbose=False):
         
         """
         Percent Power Gain for a specific wind direction bin and wind speed bin.
         
         windDirectionBin: list of length 2
         windSpeedBin: list of length 2
-        
+        useReference: Boolean, wheter to compare Test turbines to Reference 
+            turbines (True) or Test turbines to themselves in control mode
+            versus baseline mode (False).
         """
+        
+        # Wanted to add this to give flexibility to not use the reference for 
+        # one particular method, but part of me feels like this is just confusing 
+        # or a bad idea. Might take it away and just always use the object attribute
+        if useReference is None:
+            useReference = self.useReference
         
         # Set wind speed if necessary
         if self.wsCol==None:
@@ -220,28 +270,33 @@ class energyGain():
         # Set wind direction if necessary
         if self.wdCol==None:
             self.setWD()
-        
-        Rpc = self.powerRatio(windDirectionBin, windSpeedBin, "controlled")
-        Rpb = self.powerRatio(windDirectionBin, windSpeedBin, "baseline")
+            
+        # Formula depends on whether we use reference turbines    
+        if useReference:
+            control = self.powerRatio(windDirectionBin, windSpeedBin, "controlled")
+            baseline = self.powerRatio(windDirectionBin, windSpeedBin, "baseline")
+        else:
+            control = self.averagePower(windDirectionBin,windSpeedBin, self.testTurbines, "controlled") 
+            baseline = self.averagePower(windDirectionBin,windSpeedBin, self.testTurbines, "baseline")
         
         # If either of these are strings, 
-        # there are no observations in this bin to calculate a ratio from
-        if type(Rpc) is str:
-            sadMessage = Rpc + "Can't calculate power ratio for controlled mode."
+        # there are no observations in this bin to calculate a ratio or average power from
+        if type(control) is str:
+            sadMessage = control + "Can't calculate power ratio for controlled mode."
             if verbose:
                 print(sadMessage)
             return sadMessage
         
-        if type(Rpb) is str:
-            sadMessage = Rpb + "Can't calculate power ratio for baseline mode."
+        if type(baseline) is str:
+            sadMessage = baseline + "Can't calculate power ratio for baseline mode."
             if verbose:
                 print(sadMessage)
             return sadMessage
         
-        return (Rpc - Rpb)/Rpb
+        return (control - baseline)/baseline
     
     def aepGain(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1],
-                    hours=8760, AEPmethod=1, absolute=False, useReference=True):
+                    hours=8760, AEPmethod=1, absolute=False, useReference=None):
         
         """
         'Annual' energy production gain based on wind condition bin frequencies.
@@ -251,9 +306,22 @@ class energyGain():
         windSpeedSpecs: list of length 3, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
         hours: numeric, defaults to number of hours in a year
+        AEPmethod: integer, the method used to calculate AEP;
+            either 1 or 2 based on the order they appear on the slides
+        absolute: Boolean, whether to compute absolute AEP gain (True) or 
+            percent AEP gain (False)
+        useReference: Boolean, wheter to compare Test turbines to Reference 
+            turbines (True) or Test turbines to themselves in control mode
+            versus baseline mode (False).
         """
         # For frequency checks
         freqTracker=0
+        
+        # Wanted to add this to give flexibility to not use the reference for 
+        # one particular method, but part of me feels like this is just confusing 
+        # or a bad idea. Might take it away and just always use the object attribute
+        if useReference is None:
+            useReference = self.useReference
         
         # Which power columns are we interested in
         if useReference:
@@ -370,52 +438,77 @@ class energyGain():
         print(f"{aepGain} kWh")
         return aepGain
     
-    # Change this name later
-    # pct power gain
-    # I do not think this works right now
-    def plot(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
+    # Works-ish but not done, se not implemented
+    def compute1D(self, metricMethod, windDirectionSector=[0,360], 
+                  windSpeedRange=[0,20], by=1, D="direction", verbose=False):
         """
-        windDirectionSpecs: list of length 3, specifications for wind direction
-            bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
-        windSpeedSpecs: list of length 3, specifications for wind speed bins--
-            [lower bound (inclusive), upper bound (exclusive), bin width]
-        """
-        windDirectionBins = np.arange(windDirectionSpecs[0],
-                                      windDirectionSpecs[1],
-                                      windDirectionSpecs[2])
-        windSpeedBins = np.arange(windSpeedSpecs[0],
-                                  windSpeedSpecs[1],
-                                  windSpeedSpecs[2])
-        y=np.empty(shape=0, dtype=float)
-        x=np.empty(shape=0, dtype=float)
-        for speed in windSpeedBins:
-            
-            upperSpeed = speed + windSpeedSpecs[2]
-            # Not sure this is how I should do the x's
-            x_i = np.mean([speed, upperSpeed])
-            y_i = np.empty(shape=0, dtype=float)
-            
-            for direction in windDirectionBins:
-                upperDirection = direction + windDirectionSpecs[2]
-                
-                y_ij = self.percentPowerGain([direction, upperDirection],
-                                           [speed, upperSpeed])
-                if type(y_ij) is str:
-                    continue
-                
-                y_i = np.append(y_i, y_ij)
-            
-            y = np.append(y, np.mean(y_i))
-            x = np.append(x, x_i)
+        For computing metrics as a function of either wind or direction 
+        (but not both).
         
-        plt.plot(x,y)
-        plt.show()
-        return None
+        metricMethod: Method, the method you want to use to compute the 
+            measurements in each wind condition bin
+        windDirectionSector: list of length 2, specifications for wind direction
+            bins-- [lower bound (inclusive), upper bound (exclusive)]
+        windSpeedRange: list of length 2, specifications for wind speed bins--
+            [lower bound (inclusive), upper bound (exclusive)]
+        D: string, the varaible you want to compute the metric as a function of
+            (D for dimension as in 1D). Either "direction" or "speed".
+        by: step size for the bins for D
+        """
+        
+        if verbose:
+            print("Computing as a function of" + D)
+            
+        # My way of dynamically allowing you to choose D
+        # not a huge fan of the way I did this tbh but it works for now
+        if D == "direction":
+            windBins = np.arange(windDirectionSector[0],
+                                 windDirectionSector[1],
+                                 by)
+            scope = [windSpeedRange[0], windSpeedRange[1]]
+            
+        else:
+            windBins = np.arange(windSpeedRange[0],
+                                 windSpeedRange[1],
+                                 by)
+            scope = [windDirectionSector[0], windDirectionSector[1]]
+            
+        y = np.empty(shape=0, dtype=float)
+        se = np.empty(shape=0, dtype=float)
+        
+        for lowerBinBound in windBins:
+            upperBinBound = lowerBinBound + by
+            Bin = [lowerBinBound, upperBinBound]
+            
+            if D == "direction":
+                y_i = metricMethod(Bin, scope)
+            else:
+                y_i = metricMethod(scope, Bin)
+            
+            ##### Not implemented yet #####
+            se_i = self.se(metricMethod)
+            ###############################
+            
+            if type(y_i) is str:
+                np.append(y, None)
+                np.append(se, None)
+                continue
+                    
+            y = np.append(y, y_i)
+            se = np.append(se, se_i)
+            
+        resultDict = {'x': windBins, 
+                      'y': y,
+                      'se': se}
+        
+        return resultDict
+    
     
     # This will need to be updated if the metrics are 
     # changed to return something other than a string when it can't be computed
     # for a particular wind condition bin
-    def matrixOfMetrics(self, metricMethod, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
+    # used to be called matrixOfMetrics
+    def compute2D(self, metricMethod, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
         """
         For computing wind-condition-bin-specific metrics for many bins at once
         
@@ -462,7 +555,13 @@ class energyGain():
         
         return {"data": dataMatrix, "directions": windDirectionBins, "speeds": windSpeedBins}
          
+    # Just sketching out what this method might look like, not implemented at all
+    def se(self, metricMethod, seMethod="bootstrapping", conf=0.95):
+        return None
+    
+    
     # Change this name later, probably
+    # I just realized the tick marks might behave weirdly if either stepsize is specified to be less than on, there was a smart tick mark picker that I could use instead
     def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], 
                 heatmapMatrix=None, colorMap="seismic", title="Percent Power Gain"):
         """
@@ -483,9 +582,9 @@ class energyGain():
         # Compute matrix of data if needed
         if heatmapMatrix is None:
             print("Computing matrix of Percent Power Gain measurements")
-            heatmapMatrix = self.matrixOfMetrics(self.percentPowerGain,
-                                                 windDirectionSpecs,
-                                                 windSpeedSpecs)["data"]
+            heatmapMatrix = self.compute2D(self.percentPowerGain,
+                                           windDirectionSpecs,
+                                           windSpeedSpecs)["data"]
             
         fig, ax = plt.subplots()
         heatmap = plt.imshow(heatmapMatrix, cmap=colorMap, 
@@ -508,8 +607,60 @@ class energyGain():
         
         return heatmapMatrix
         
-    
-    
+    # Change this name later
+    # pct power gain
+    # This does NOT work, the scatterplot and line plot do not line up
+    def plot(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], x=None, y=None):
+        """
+        windDirectionSpecs: list of length 3, specifications for wind direction
+            bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
+        windSpeedSpecs: list of length 3, specifications for wind speed bins--
+            [lower bound (inclusive), upper bound (exclusive), bin width]
+        """
+        # If all data is missing, calculate some default
+        if (x is None) and (y is None):
+            resultDict = self.compute1D(self.percentPowerGain, windDirectionSpecs[0:2],
+                                        windSpeedSpecs[0:2], by=windDirectionSpecs[2],)
+            x = resultDict['x']
+            y = resultDict['y']
+            #title = "Percent Power Gain"
+        elif (x is None) or (y is None):
+            # If only one is missing, that means someone oopsied
+            sillyGoose = "Didn't provide all data."
+            return print(sillyGoose)
+        
+        fig, ax = plt.subplots()
+        
+        #ax.scatter(x,y)
+        
+        # # Labels
+        # ax.set_title(title)
+        # ax.set_xlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
+        # ax.set_ylabel("Wind Speed (m/s)")
+        
+        ax.scatter(x=x,y=y, c="red")
+        ax.plot(x,y)
+        
+        ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
+        ax.yaxis.set_major_locator(mticker.MultipleLocator(0.01))
+        ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
+        ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.005))
+        
+        ax.grid(visible=True, which="major")
+        
+        plt.show()
+        
+        return None
+  
+# Removing this later
+# df_scada = pd.read_feather("C:/Users/ctodd/Documents/GitHub/flasc/examples_smarteole/postprocessed/df_scada_data_60s_filtered_and_northing_calibrated.ftr")
+# FI = load_smarteole_floris(wake_model="C:/Users/ctodd/Documents/GitHub/floris/examples/inputs/gch.yaml", wd_std=0.0)
+# dfUpstream = ftools.get_upstream_turbs_floris(FI)
+# testTurbines = [4,5]
+# referenceTurbines = [0,1,2,6]
+# df_scadaNoNan = df_scada.dropna(subset=[f'pow_{i:03d}' for i in testTurbines+referenceTurbines])
+# thing = energyGain(df_scadaNoNan, dfUpstream, testTurbines, referenceTurbines,wdCol="wd_smarteole", wsCol="ws_smarteole")
+# thing.plot([190,250,5],[0,20,1])
     
     
     
