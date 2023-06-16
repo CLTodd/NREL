@@ -460,11 +460,13 @@ class energyGain():
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
         windSpeedSpecs: list of length 3, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
-        heatmapMatrix: can pass in a matrix of your metric of choice
+        heatmapMatrix: can pass in a matrix of your metric of choice. 
+            Right now the default is to compute a matrix od percent power gain measurements if none is provided.
         """
 
         # Compute matrix of data if needed
         if heatmapMatrix is None:
+            print("Computing matrix of Percent Power Gain measurements")
             heatmapMatrix = self.matrixOfMetrics(self.percentPowerGain,
                                                  windDirectionSpecs,
                                                  windSpeedSpecs)["data"]
