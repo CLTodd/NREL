@@ -7,6 +7,7 @@ Created on Fri Jun  9 13:03:40 2023
 
 #import pdb
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import re # can probably figure out a way to not use this
 from flasc.dataframe_operations import dataframe_manipulations as dfm
@@ -370,6 +371,8 @@ class energyGain():
         return aepGain
     
     # Change this name later
+    # pct power gain
+    # I do not think this works right now
     def plot(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
         """
         windDirectionSpecs: list of length 3, specifications for wind direction
@@ -410,6 +413,7 @@ class energyGain():
         return None
     
     # Better comments later
+    # This mostly works right now but theres a chance the matrix it returns is the transpose of what I'm expecting
     def matrixOfMetrics(self, metricMethod, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
         """
         For wind-condition-bin-specific metrics
@@ -440,12 +444,17 @@ class energyGain():
                 
                 dataMatrix[i,j] = y_ij
         
-        return {"data": dataMatrix, "directions": windDirectionBins, "speeds": windSpeedBins}
+        # For some reason the previous code gives me the transpose of what 
+        # I expect, so this is my quick fix for now
+        dataMatrixT = np.transpose(dataMatrix)
+        
+        return {"data": dataMatrixT, "directions": windDirectionBins, "speeds": windSpeedBins}
         
     
     # Change this name later
-    # this does NOT work right now
-    def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], cmap='hot'):
+    #pct power gain heat map
+    # this works but is not done
+    def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
         """
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
@@ -461,26 +470,39 @@ class energyGain():
         I = heatmapMatrix.shape[0]
         J = heatmapMatrix.shape[1]
         
-        windDirectionBins = resultDict["directions"]
-        windSpeedBins = resultDict["speeds"]
+        #windDirectionBins = resultDict["directions"]
+        #windSpeedBins = resultDict["speeds"]
             
         fig, ax = plt.subplots()
-        heatmap = ax.imshow(heatmapMatrix, cmap=cmap, interpolation=None, origin='lower')
+        heatmap = plt.imshow(heatmapMatrix, cmap='plasma', interpolation=None, origin='lower')
+        # Tick marks at multiples of 5 and 1
+        ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
+        ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
+        ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
+        ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
+        
+        # Labels
+        ax.set_title("Percent Power Gain Heatmap")
+        ax.set_xlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
+        ax.set_ylabel("Wind Speed (m/s)")
+
         fig.colorbar(heatmap) # legend
         
-        xTicks = np.arange(0,I+1,1)-0.5
-        plt.xticks(xTicks)
-        xLabels = np.append(windDirectionBins, windDirectionSpecs[1])
-        ax.set_xticklabels(xLabels)
         
-        #breakpoint()
+        #ax.xaxis.set_minor_locator(mticker.maxNLocator(I))
         
-        yTicks = np.arange(0,J+1,1)-0.5
-        plt.yticks(yTicks)
-        yLabels = np.append(windSpeedBins, windSpeedSpecs[1])
-        ax.set_yticklabels(yLabels)
+        #xTicks = np.arange(0,I+1,1)-0.5
+        #plt.xticks(xTicks)
+        #xLabels = np.append(windDirectionBins, windDirectionSpecs[1])
+        #ax.set_xticklabels(xLabels)
+        
+        #yTicks = np.arange(0,J+1,1)-0.5
+        #plt.yticks(yTicks)
+        #yLabels = np.append(windSpeedBins, windSpeedSpecs[1])
+        #ax.set_yticklabels(yLabels)
         
         plt.show()
+        #ax.plot()
         
         
         
