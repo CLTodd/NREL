@@ -412,56 +412,72 @@ class energyGain():
         plt.show()
         return None
     
-    # Better comments later
-    # This mostly works right now but theres a chance the matrix it returns is the transpose of what I'm expecting
+    # This works right now but will need to be updated if the metrics are 
+    # changed to return something other than a string when it can't be computed
+    # for a particular wind condition bin
     def matrixOfMetrics(self, metricMethod, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
         """
-        For wind-condition-bin-specific metrics
+        For computing wind-condition-bin-specific metrics for many bins at once
+        
+        metricMethod: Method, the method you want to use to compute the 
+            measurements in each wind condition bin
+        windDirectionSpecs: list of length 3, specifications for wind direction
+            bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
+        windSpeedSpecs: list of length 3, specifications for wind speed bins--
+            [lower bound (inclusive), upper bound (exclusive), bin width]
         """
         
+        # Get the bounds for each wind condition bin
         windDirectionBins = np.arange(windDirectionSpecs[0],
                                       windDirectionSpecs[1],
                                       windDirectionSpecs[2])
         windSpeedBins = np.arange(windSpeedSpecs[0],
                                   windSpeedSpecs[1],
                                   windSpeedSpecs[2])
-        I = windDirectionBins.size
-        J = windSpeedBins.size
-        dataMatrix = np.full((I, J), None, dtype=float)
         
-        for i in range(I):
-            direction = windDirectionBins[i]
+        # Initialize 'empty' matrix( matrix of Nones)        
+        nCol = windDirectionBins.size
+        nRow = windSpeedBins.size
+        dataMatrix = np.full((nRow, nCol), None, dtype=float)
+        
+        # Going through the matrix
+        for j in range(nCol):
+            direction = windDirectionBins[j]
             upperDirection = direction + windDirectionSpecs[2]
             
-            for j in range(J):
-                speed = windSpeedBins[j]
+            for i in range(nRow):
+                speed = windSpeedBins[i]
                 upperSpeed = speed + windSpeedSpecs[2]
                 
                 y_ij = metricMethod([direction, upperDirection],
                                    [speed, upperSpeed])
+                
+                # If the metric couldn't be computed for a certain bin, 
+                # it would have returned a string
                 if type(y_ij) is str:
                     y_ij = None
                 
+                # Store the measurement
                 dataMatrix[i,j] = y_ij
         
-        # For some reason the previous code gives me the transpose of what 
-        # I expect, so this is my quick fix for now
-        dataMatrixT = np.transpose(dataMatrix)
-        
-        return {"data": dataMatrixT, "directions": windDirectionBins, "speeds": windSpeedBins}
+        return {"data": dataMatrix, "directions": windDirectionBins, "speeds": windSpeedBins}
          
     # Change this name later, probably
-    # pct power gain heat map
-    # this works but is not done
-    # fix the title thing
-    def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], heatmapMatrix=None, colorMap="seismic", title="Percent Power Gain"):
+    def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], 
+                heatmapMatrix=None, colorMap="seismic", title="Percent Power Gain"):
         """
+        For plotting a heatmap of some metric over many wind condition bins
+        
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
         windSpeedSpecs: list of length 3, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
-        heatmapMatrix: can pass in a matrix of your metric of choice. 
-            Right now the default is to compute a matrix od percent power gain measurements if none is provided.
+        heatmapMatrix: Matrix, can pass in a matrix of  data 
+            Right now the default is to compute a matrix od percent power gain 
+            measurements if no matrix is provided.
+        colorMap: any color mapping that works with matplotlib. 
+            Diverging color maps and colormaps that exclude white are recommended.
+        title: string,
         """
 
         # Compute matrix of data if needed
