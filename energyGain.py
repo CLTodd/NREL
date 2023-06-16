@@ -412,7 +412,7 @@ class energyGain():
         plt.show()
         return None
     
-    # This works right now but will need to be updated if the metrics are 
+    # This will need to be updated if the metrics are 
     # changed to return something other than a string when it can't be computed
     # for a particular wind condition bin
     def matrixOfMetrics(self, metricMethod, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
@@ -435,7 +435,7 @@ class energyGain():
                                   windSpeedSpecs[1],
                                   windSpeedSpecs[2])
         
-        # Initialize 'empty' matrix( matrix of Nones)        
+        # Initialize 'empty' matrix (matrix of Nones)        
         nCol = windDirectionBins.size
         nRow = windSpeedBins.size
         dataMatrix = np.full((nRow, nCol), None, dtype=float)
