@@ -96,11 +96,6 @@ class energyGain():
         # or a bad idea. Might take it away and just always use the object attribute
         if useReference is None:
             useReference = self.useReference
-            
-        if (useReference==True) and (controlMode is None):
-            sillyGoose = "Must specify control mode to use reference turbine information."
-            print(sillyGoose)
-            return sillyGoose
         
         # Set wind speed if necessary
         if self.wsCol==None:
@@ -111,22 +106,16 @@ class energyGain():
             self.setWD()
         
         # Calculate Ratio
+        numerator = self.averagePower(windDirectionBin, windSpeedBin,
+                                      self.testTurbines, controlMode=controlMode)
         
         if useReference:
-            numerator = self.averagePower(windDirectionBin, windSpeedBin,
-                                          self.testTurbines, controlMode=controlMode)
-            
             denominator = self.averagePower(windDirectionBin, windSpeedBin,
                                             self.referenceTurbines, controlMode=controlMode)
-            if verbose:
-                # Just a reminder, since the power ratio formula is different without reference turbines
-                print("Calculating ratio of average power during control and baseline modes for test turbines only.")
         else:
-            numerator = self.averagePower(windDirectionBin, windSpeedBin,
-                                          self.testTurbines, controlMode="controlled")
+            denominator = 1
+            print("Reference turbines unused; calculating average power.")
             
-            denominator = self.averagePower(windDirectionBin, windSpeedBin,
-                                          self.testTurbines, controlMode="baseline")
         
         # If either of these are strings, 
         # there are no observations in this bin to calculate a ratio from
@@ -213,22 +202,19 @@ class energyGain():
         if self.wdCol ==None:
             self.setWD()
 
-        if not useReference: 
-            # Since the power ratio is define completely differently 
-            # when we aren't using reference turbines, I'm directly calling 
-            # the average power method to compute this (can't set denom=1)
-            # I think this is really important so I'm printing this regardless of verbose
+        if useReference:
+            # Typical power ratio formula if we are using reference turbines
+            control = self.powerRatio(windDirectionBin, windSpeedBin, "controlled", useReference=True)
+            baseline = self.powerRatio(windDirectionBin, windSpeedBin, "baseline", useReference=True)
+        else:
+            control = self.powerRatio(windDirectionBin, windSpeedBin, "controlled", useReference=False)
+            baseline = self.powerRatio(windDirectionBin, windSpeedBin, "baseline", useReference=False)
+            
+            # I think this is important so I'm printing this regardless of verbose
             FYI = "Change in power ratio is simply change in average power without reference turbines.\n"
             FYI += "Returning change in average power. If this isn't what you want, set the useReference argument to True."        
             print(FYI)
-            
-            control = self.averagePower(windDirectionBin, windSpeedBin, "controlled")
-            baseline = self.averagePower(windDirectionBin, windSpeedBin, "baseline")
-        
-        # Typical power ratio formula if we are using test turbines
-        control = self.powerRatio(windDirectionBin, windSpeedBin, "controlled")
-        baseline = self.powerRatio(windDirectionBin, windSpeedBin, "baseline")
-        
+ 
         # If either of these are strings, 
         # there are no observations in this bin to calculate a ratio from
         if type(control) is str:
@@ -271,13 +257,9 @@ class energyGain():
         if self.wdCol==None:
             self.setWD()
             
-        # Formula depends on whether we use reference turbines    
-        if useReference:
-            control = self.powerRatio(windDirectionBin, windSpeedBin, "controlled")
-            baseline = self.powerRatio(windDirectionBin, windSpeedBin, "baseline")
-        else:
-            control = self.averagePower(windDirectionBin,windSpeedBin, self.testTurbines, "controlled") 
-            baseline = self.averagePower(windDirectionBin,windSpeedBin, self.testTurbines, "baseline")
+        # If useReference==False, this simplifies to average power
+        control = self.powerRatio(windDirectionBin, windSpeedBin, "controlled", useReference)
+        baseline = self.powerRatio(windDirectionBin, windSpeedBin, "baseline", useReference)
         
         # If either of these are strings, 
         # there are no observations in this bin to calculate a ratio or average power from
@@ -506,8 +488,8 @@ class energyGain():
     
     # This will need to be updated if the metrics are 
     # changed to return something other than a string when it can't be computed
-    # for a particular wind condition bin
-    # used to be called matrixOfMetrics
+    # for a particular wind condition bin.
+    # This used to be named matrixOfMetrics.
     def compute2D(self, metricMethod, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1]):
         """
         For computing wind-condition-bin-specific metrics for many bins at once
@@ -638,7 +620,7 @@ class energyGain():
         # ax.set_xlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
         # ax.set_ylabel("Wind Speed (m/s)")
         
-        ax.scatter(x=x,y=y, c="red")
+        ax.scatter(x=x,y=y, c="blue")
         ax.plot(x,y)
         
         ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
@@ -647,6 +629,9 @@ class energyGain():
         ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.005))
         
         ax.grid(visible=True, which="major")
+        
+        ax.scatter(x=x,y=y, c="red")
+        #ax.plot(x,y)
         
         plt.show()
         
