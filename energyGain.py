@@ -424,7 +424,7 @@ class energyGain():
     
     # Works-ish but not done, se not implemented
     def compute1D(self, metricMethod, windDirectionSector=[0,360], 
-                  windSpeedRange=[0,20], by=1, D="direction", verbose=False):
+                  windSpeedRange=[0,20], by=1, dim="direction", verbose=False):
         """
         For computing metrics as a function of either wind or direction 
         (but not both).
@@ -435,17 +435,17 @@ class energyGain():
             bins-- [lower bound (inclusive), upper bound (exclusive)]
         windSpeedRange: list of length 2, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive)]
-        D: string, the varaible you want to compute the metric as a function of
-            (D for dimension as in 1D). Either "direction" or "speed".
-        by: step size for the bins for D
+        dim: string, the varaible you want to compute the metric as a function of
+            (dim for dimension as in 1D). Either "direction" or "speed".
+        by: step size for the bins for dim
         """
         
         if verbose:
-            print("Computing as a function of" + D)
+            print("Computing as a function of" + dim)
             
-        # My way of dynamically allowing you to choose D
+        # My way of dynamically allowing you to choose dim
         # not a huge fan of the way I did this tbh but it works for now
-        if D == "direction":
+        if dim == "direction":
             windBins = np.arange(windDirectionSector[0],
                                  windDirectionSector[1],
                                  by)
@@ -464,7 +464,7 @@ class energyGain():
             upperBinBound = lowerBinBound + by
             Bin = [lowerBinBound, upperBinBound]
             
-            if D == "direction":
+            if dim == "direction":
                 y_i = metricMethod(Bin, scope)
             else:
                 y_i = metricMethod(scope, Bin)
@@ -486,8 +486,7 @@ class energyGain():
                       'se': se}
         
         return resultDict
-    
-    
+ 
     # This will need to be updated if the metrics are 
     # changed to return something other than a string when it can't be computed
     # for a particular wind condition bin.
@@ -543,15 +542,44 @@ class energyGain():
     #def se(self, metricMethod, seMethod="bootstrapping", conf=0.95):
         return None
     
-    def bootstrapEstimate(self, windDirectionSpecs=[0,360,1], 
-                          windSpeedSpecs=[0,20,1], seMultiplier=2, 
-                          lowerPercentile=2.5, upperPercentile=97.5,
-                          B=1000, seed=None, retainReps = False):# figure out how to use kwargs here for hours, aepmethod, and absolute
+    # Untested
+    def bootstrapEstimate(self, metricMethod=None, nDim=1, windDirectionSector=[0,360], 
+                          windSpeedRange=[0,20], by=1, dim="direction", 
+                          windDirectionSpecs=[0,360,1], 
+                          windSpeedSpecs=[0,20,1], 
+                          seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
+                          B=1000, seed=None, retainReps = False,):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
+        """
+        Compute summary statistics of bootsrapped samples based on your metric of choice
         
+        nDim: int, 1 or 2; Number of directions along which to compute the 
+            metric-- i.e., make bins based on just wind speed or direction or 
+            make 2D bins based on both
+        metricMethod: Method, the method you want to use to compute the 
+             measurements in each wind condition bin (not implemented yet)
+         
+        windDirectionSector: list of length 2, specifications for wind direction
+             bins-- [lower bound (inclusive), upper bound (exclusive)]. 
+             Only used if nDim=1
+        windSpeedRange: list of length 2, specifications for wind speed bins--
+             [lower bound (inclusive), upper bound (exclusive)]
+             Only used if nDim=1
+        dim: string, the varaible you want to compute the metric as a function of
+             (dim for dimension as in 1D). Either "direction" or "speed".
+             Only used if nDim=1
+        by: step size for the bins for dim. Only used if nDim=1.
+        
+
+        windDirectionSpecs: list of length 3, specifications for wind direction
+            bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
+            Only used if nDim=2
+        windSpeedSpecs: list of length 3, specifications for wind speed bins--
+            [lower bound (inclusive), upper bound (exclusive), bin width]
+            Only used if nDim=2
+        """
+        # Assuming valid inputs
         shape = self.df.shape()
-        resultDict = {"directionLowerBound":None,
-                      "speedLowerBound":None,
-                      "mean": None,
+        resultDict = {"mean": None,
                       "meanMinusSE": None,
                       "meanPlusSE": None,
                       "median": None,
@@ -561,46 +589,63 @@ class energyGain():
         # Set seed for reproducibility
         prng = np.random.default_rng(seed)
         
-        # Get all combos of wind condition
-        allCombos = np.array([(direction, speed) 
-                              for direction in range(windDirectionSpecs[0],
-                                                     windDirectionSpecs[1],
-                                                     windDirectionSpecs[2]) 
-                              for speed in range(windSpeedSpecs[0],
-                                                 windSpeedSpecs[1],
-                                                 windSpeedSpecs[2])])
-        
-        # All bootstrap samples at once
+        # Get all bootstrap samples indices at once
         bootstrapIdx = prng.choice(shape[0], size=(B, shape[0]), replace=True)
         
-        # matrix to hold all botstrap samples
-        # One row is one bootstrap rep
-        bootstrapMatrix = np.full((B, allCombos.shape[0]), None, dtype=float)        
+        # Set up wind condition bins
+        if nDim==1:
+
+            if dim == "direction":
+                windBins = np.arange(windDirectionSector[0],
+                                     windDirectionSector[1], by)
+            else:
+                windBins = np.arange(windSpeedRange[0],
+                                     windSpeedRange[1], by)
+                
+        else: #nDim=2
+            windBins = np.array([(direction, speed) 
+                             for direction in range(windDirectionSpecs[0],
+                                                    windDirectionSpecs[1],
+                                                    windDirectionSpecs[2]) 
+                             for speed in range(windSpeedSpecs[0],
+                                                windSpeedSpecs[1],
+                                                windSpeedSpecs[2])])
+            print("Computing as a function of" + dim)
+        
+        # Matrix to hold all botstrap samples (one row = one bootstrap rep)
+        bootstrapMatrix = np.full((B, windBins.shape[0]), None, dtype=float)        
         
         for rep in range(B):
             indices = bootstrapIdx[rep]
             # Get the sample for this bootstrap rep
             dfTemp = self.df.iloc[indices]
+            
             # reset the data frame indices
             # I'm not entirely sure this matters, but just in case
             dfTemp.reset_index(drop=True, inplace=True)
+            
             # Create temporary energyGain object
             egTemp = energyGain.energyGain(dfTemp,self.dfUpstream, self.testTurbines,
                                            self.refTurbines, self.wdCol, self.wsCol, 
                                            self.useReference)
-            # compute the desired metric for every wind condition bin
-            compute2DResults = egTemp.compute2D(egTemp.aepGain,
-                                                windDirectionSpecs,
-                                                windSpeedSpecs)
-            compute2Ddata = compute2DResults["data"]
+            if nDim==1:
+                # compute the desired metric for every wind condition bin
+                computeResults = egTemp.compute1D(egTemp.aepGain, # I don't think metric method will work here but come back and check
+                                                  windDirectionSector,
+                                                  windSpeedRange, by=by, dim=dim)["y"]
+            else:#(if nDim==2)
             # Flatten the resulting matrix so that we have an array that goes 
             # through all speeds and then changes directions
-            compute2Dflattened = compute2Ddata.flatten('F')
-            # Save the array (flattened matrix) as one row in the bootstrap matrix
-            bootstrapMatrix[rep] = compute2Dflattened
+                computeResults = egTemp.compute2D(egTemp.aepGain,
+                                                windDirectionSpecs,
+                                                windSpeedSpecs)["data"].flatten("F")
+                #computeData = computeResults["data"].flatten("F")
+            
+            # Save the array as one row in the bootstrap matrix
+            bootstrapMatrix[rep] = computeResults
          
         # Compute sampling distribution statistics across each rep
-        # (across rows/bycolumn) one column = all the reps for one bin
+        # (across rows/by column) one column = all the reps for one bin
         means = np.mean(bootstrapMatrix, axis=0)
         se = np.std(bootstrapMatrix, axis=0)
         meansPlus2SE = means + seMultiplier*se
@@ -609,6 +654,7 @@ class energyGain():
         lowerPercentiles = np.percentile(bootstrapMatrix, q=lowerPercentile, axis=0)
         upperPercentiles = np.percentile(bootstrapMatrix, q=upperPercentile, axis=0)
         
+        # Add results to dictionary
         resultDict["mean"]= means
         resultDict["se"]= se
         resultDict["meanPlus2SE"]= meansPlus2SE
@@ -616,9 +662,14 @@ class energyGain():
         resultDict["median"]= medians
         resultDict["lowerPercentile"]= lowerPercentiles
         resultDict["upperPercentile"]= upperPercentiles
-        resultDict["directionLowerBound"] = allCombos[:,0]
-        resultDict["speedLowerBound"] = allCombos[:,1]
         
+        if nDim==1:
+            resultDict["binLowerBound"] = windBins
+        else:#(if nDim==2)
+            resultDict["directionLowerBound"] = windBins[:,0]
+            resultDict["speedLowerBound"] = windBins[:,1]
+        
+        # Return the actual samples if desired
         if retainReps:
             return {"stats":pd.DataFrame(resultDict), 
                     "reps":bootstrapMatrix}
