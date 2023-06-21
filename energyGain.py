@@ -9,6 +9,8 @@ Created on Fri Jun  9 13:03:40 2023
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+import pandas as pd
+#import random
 import re # can probably figure out a way to not use this
 from flasc.dataframe_operations import dataframe_manipulations as dfm
  
@@ -538,9 +540,90 @@ class energyGain():
         return {"data": dataMatrix, "directions": windDirectionBins, "speeds": windSpeedBins}
          
     # Just sketching out what this method might look like, not implemented at all
-    def se(self, metricMethod, seMethod="bootstrapping", conf=0.95):
+    #def se(self, metricMethod, seMethod="bootstrapping", conf=0.95):
         return None
     
+    def bootstrapEstimate(self, windDirectionSpecs=[0,360,1], 
+                          windSpeedSpecs=[0,20,1], seMultiplier=2, 
+                          lowerPercentile=2.5, upperPercentile=97.5,
+                          B=1000, seed=None, retainReps = False):# figure out how to use kwargs here for hours, aepmethod, and absolute
+        
+        shape = self.df.shape()
+        resultDict = {"directionLowerBound":None,
+                      "speedLowerBound":None,
+                      "mean": None,
+                      "meanMinusSE": None,
+                      "meanPlusSE": None,
+                      "median": None,
+                      "upperPercentile": None,
+                      "lowerPercentile": None}
+        
+        # Set seed for reproducibility
+        prng = np.random.default_rng(seed)
+        
+        # Get all combos of wind condition
+        allCombos = np.array([(direction, speed) 
+                              for direction in range(windDirectionSpecs[0],
+                                                     windDirectionSpecs[1],
+                                                     windDirectionSpecs[2]) 
+                              for speed in range(windSpeedSpecs[0],
+                                                 windSpeedSpecs[1],
+                                                 windSpeedSpecs[2])])
+        
+        # All bootstrap samples at once
+        bootstrapIdx = prng.choice(shape[0], size=(B, shape[0]), replace=True)
+        
+        # matrix to hold all botstrap samples
+        # One row is one bootstrap rep
+        bootstrapMatrix = np.full((B, allCombos.shape[0]), None, dtype=float)        
+        
+        for rep in range(B):
+            indices = bootstrapIdx[rep]
+            # Get the sample for this bootstrap rep
+            dfTemp = self.df.iloc[indices]
+            # reset the data frame indices
+            # I'm not entirely sure this matters, but just in case
+            dfTemp.reset_index(drop=True, inplace=True)
+            # Create temporary energyGain object
+            egTemp = energyGain.energyGain(dfTemp,self.dfUpstream, self.testTurbines,
+                                           self.refTurbines, self.wdCol, self.wsCol, 
+                                           self.useReference)
+            # compute the desired metric for every wind condition bin
+            compute2DResults = egTemp.compute2D(egTemp.aepGain,
+                                                windDirectionSpecs,
+                                                windSpeedSpecs)
+            compute2Ddata = compute2DResults["data"]
+            # Flatten the resulting matrix so that we have an array that goes 
+            # through all speeds and then changes directions
+            compute2Dflattened = compute2Ddata.flatten('F')
+            # Save the array (flattened matrix) as one row in the bootstrap matrix
+            bootstrapMatrix[rep] = compute2Dflattened
+         
+        # Compute sampling distribution statistics across each rep
+        # (across rows/bycolumn) one column = all the reps for one bin
+        means = np.mean(bootstrapMatrix, axis=0)
+        se = np.std(bootstrapMatrix, axis=0)
+        meansPlus2SE = means + seMultiplier*se
+        meansMinus2SE = means - seMultiplier*se
+        medians = np.percentile(bootstrapMatrix, q=50, axis=0)
+        lowerPercentiles = np.percentile(bootstrapMatrix, q=lowerPercentile, axis=0)
+        upperPercentiles = np.percentile(bootstrapMatrix, q=upperPercentile, axis=0)
+        
+        resultDict["mean"]= means
+        resultDict["se"]= se
+        resultDict["meanPlus2SE"]= meansPlus2SE
+        resultDict["meanMinus2SE"]= meansMinus2SE
+        resultDict["median"]= medians
+        resultDict["lowerPercentile"]= lowerPercentiles
+        resultDict["upperPercentile"]= upperPercentiles
+        resultDict["directionLowerBound"] = allCombos[:,0]
+        resultDict["speedLowerBound"] = allCombos[:,1]
+        
+        if retainReps:
+            return {"stats":pd.DataFrame(resultDict), 
+                    "reps":bootstrapMatrix}
+        
+        return pd.DataFrame(resultDict)
     
     # Change this name later, probably
     # I just realized the tick marks might behave weirdly if either stepsize is specified to be less than on, there was a smart tick mark picker that I could use instead
