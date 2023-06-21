@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-import pdb
+from timeit import default_timer
 import re # can probably figure out a way to not use this
 from flasc.dataframe_operations import dataframe_manipulations as dfm
  
@@ -542,7 +542,8 @@ class energyGain():
     #def se(self, metricMethod, seMethod="bootstrapping", conf=0.95):
         return None
     
-    # Untested
+    # Mostly 0Untested
+    # if nDim is 1, cannot be used with aepGain
     def bootstrapEstimate(self, metricMethod=None, nDim=1, windDirectionSector=[0,360], 
                           windSpeedRange=[0,20], by=1, dim="direction", 
                           windDirectionSpecs=[0,360,1], 
@@ -578,6 +579,7 @@ class energyGain():
             Only used if nDim=2
         """
         # Assuming valid inputs
+        start = default_timer()
         Shape = self.df.shape
         resultDict = {"mean": None,
                       "meanMinusSE": None,
@@ -681,7 +683,8 @@ class energyGain():
         if retainReps:
             return {"stats":pd.DataFrame(resultDict), 
                     "reps":bootstrapMatrix}
-        
+        duration = default_timer() - start
+        print(duration)
         return pd.DataFrame(resultDict)
     
     # Change this name later, probably
