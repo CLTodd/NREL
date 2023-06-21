@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-#import random
+import pdb
 import re # can probably figure out a way to not use this
 from flasc.dataframe_operations import dataframe_manipulations as dfm
  
@@ -30,21 +30,26 @@ class energyGain():
             turbines (True) or Test turbines to themselves in control mode
             versus baseline mode (False).
         """
-        
+        #breakpoint()
         self.df = df
         self.dfUpstream = dfUpstream
         self.testTurbines = testTurbines
         self.referenceTurbines = refTurbines
-        self.allTurbines = [int(re.sub("\D+","",colname)) for colname in list(df) if re.match('^pow_\d+', colname)]
         self.wdCol = wdCol
         self.wsCol = wsCol
         self.useReference = useReference
-        
         # Set the columns to be referenced for wind speed and direction if not given   
         if self.wdCol == None:
             self.setWD() 
         if self.wsCol==None:
             self.setWS()
+            
+        # quick fix for now
+        if df is not None:
+            self.allTurbines = [int(re.sub("\D+","",colname)) for colname in list(df) if re.match('^pow_\d+', colname)]
+        else:
+            self.allTurbines = None
+            
 
     def setWS(self, colname=None):
         """
@@ -423,6 +428,7 @@ class energyGain():
         return aepGain
     
     # Works-ish but not done, se not implemented
+    # This so far cannot accept aep methods
     def compute1D(self, metricMethod, windDirectionSector=[0,360], 
                   windSpeedRange=[0,20], by=1, dim="direction", verbose=False):
         """
@@ -469,21 +475,15 @@ class energyGain():
             else:
                 y_i = metricMethod(scope, Bin)
             
-            ##### Not implemented yet #####
-            se_i = self.se(metricMethod)
-            ###############################
-            
             if type(y_i) is str:
                 np.append(y, None)
                 np.append(se, None)
                 continue
                     
             y = np.append(y, y_i)
-            se = np.append(se, se_i)
             
         resultDict = {'x': windBins, 
-                      'y': y,
-                      'se': se}
+                      'y': y}
         
         return resultDict
  
@@ -578,7 +578,7 @@ class energyGain():
             Only used if nDim=2
         """
         # Assuming valid inputs
-        shape = self.df.shape()
+        Shape = self.df.shape
         resultDict = {"mean": None,
                       "meanMinusSE": None,
                       "meanPlusSE": None,
@@ -590,7 +590,7 @@ class energyGain():
         prng = np.random.default_rng(seed)
         
         # Get all bootstrap samples indices at once
-        bootstrapIdx = prng.choice(shape[0], size=(B, shape[0]), replace=True)
+        bootstrapIdx = prng.choice(Shape[0], size=(B, Shape[0]), replace=True)
         
         # Set up wind condition bins
         if nDim==1:
@@ -610,33 +610,41 @@ class energyGain():
                              for speed in range(windSpeedSpecs[0],
                                                 windSpeedSpecs[1],
                                                 windSpeedSpecs[2])])
-            print("Computing as a function of" + dim)
+            #print("Computing as a function of" + dim)
         
         # Matrix to hold all botstrap samples (one row = one bootstrap rep)
         bootstrapMatrix = np.full((B, windBins.shape[0]), None, dtype=float)        
         
+        # Create temporary energyGain object
+        egTemp = energyGain(df=None,
+                            dfUpstream=self.dfUpstream, 
+                            testTurbines=self.testTurbines,
+                            refTurbines=self.referenceTurbines,
+                            wdCol=self.wdCol,
+                            wsCol=self.wsCol,
+                            useReference=self.useReference)
+        
         for rep in range(B):
             indices = bootstrapIdx[rep]
-            # Get the sample for this bootstrap rep
+            # Get the sample for this bootstrap rep   
             dfTemp = self.df.iloc[indices]
             
             # reset the data frame indices
             # I'm not entirely sure this matters, but just in case
             dfTemp.reset_index(drop=True, inplace=True)
             
-            # Create temporary energyGain object
-            egTemp = energyGain.energyGain(dfTemp,self.dfUpstream, self.testTurbines,
-                                           self.refTurbines, self.wdCol, self.wsCol, 
-                                           self.useReference)
+            # Update temporary energyGain object
+            egTemp.df=dfTemp
+            #breakpoint()
             if nDim==1:
                 # compute the desired metric for every wind condition bin
-                computeResults = egTemp.compute1D(egTemp.aepGain, # I don't think metric method will work here but come back and check
+                computeResults = egTemp.compute1D(egTemp.percentPowerGain, # I don't think metric method will work here but come back and check
                                                   windDirectionSector,
                                                   windSpeedRange, by=by, dim=dim)["y"]
             else:#(if nDim==2)
             # Flatten the resulting matrix so that we have an array that goes 
             # through all speeds and then changes directions
-                computeResults = egTemp.compute2D(egTemp.aepGain,
+                computeResults = egTemp.compute2D(egTemp.percentPowerGain,
                                                 windDirectionSpecs,
                                                 windSpeedSpecs)["data"].flatten("F")
                 #computeData = computeResults["data"].flatten("F")
@@ -648,8 +656,8 @@ class energyGain():
         # (across rows/by column) one column = all the reps for one bin
         means = np.mean(bootstrapMatrix, axis=0)
         se = np.std(bootstrapMatrix, axis=0)
-        meansPlus2SE = means + seMultiplier*se
-        meansMinus2SE = means - seMultiplier*se
+        meansPlusSE = means + seMultiplier*se
+        meansMinusSE = means - seMultiplier*se
         medians = np.percentile(bootstrapMatrix, q=50, axis=0)
         lowerPercentiles = np.percentile(bootstrapMatrix, q=lowerPercentile, axis=0)
         upperPercentiles = np.percentile(bootstrapMatrix, q=upperPercentile, axis=0)
@@ -657,8 +665,8 @@ class energyGain():
         # Add results to dictionary
         resultDict["mean"]= means
         resultDict["se"]= se
-        resultDict["meanPlus2SE"]= meansPlus2SE
-        resultDict["meanMinus2SE"]= meansMinus2SE
+        resultDict["meanPlusSE"]= meansPlusSE
+        resultDict["meanMinusSE"]= meansMinusSE
         resultDict["median"]= medians
         resultDict["lowerPercentile"]= lowerPercentiles
         resultDict["upperPercentile"]= upperPercentiles
