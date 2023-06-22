@@ -437,7 +437,8 @@ class energyGain():
         windSpeedSpecs: list of length 3 or 2, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
             If speed is not in stepVars, 3rd element gets ignored if it exists.
-        stepVars: string ("speed" or "direction") or list of the possible strings
+        stepVars: string ("speed" or "direction") or list of the possible strings.
+            The variable(s) you want to increment by for the wind condition bins
         copy: boolean, whether to simply return a copy of self.df (True) or to actually update self.df (False)
             Default is true because rows outside of the specs will be deleted
         """
@@ -460,8 +461,10 @@ class energyGain():
             
         # Return the copy with the bin columns
         return df
-                
-    def binAll(self,windDirectionSpecs,windSpeedSpecs, stepVars = ["direction", "speed"], retainControlMode=True):
+              
+    def binAll(self, stepVars = ["direction", "speed"], retainControlMode=True, 
+               retainTurbineLabel=True,df=None, windDirectionSpecs=None,
+               windSpeedSpecs=None, returnWide=True):
         """
         windDirectionSpecs: list of length 3 or 2, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width].
@@ -470,12 +473,15 @@ class energyGain():
             [lower bound (inclusive), upper bound (exclusive), bin width]
             If speed is not in stepVars, 3rd element gets ignored if it exists.
         stepVars: string ("speed" or "direction") or list of the possible strings
+            The variable(s) you want to increment by for the wind condition bins
         retainControlMode: boolean, whether to keep the control mode column (True) or not (False)
         """
         stepVars = list(stepVars)
-        df = self.binAdder(windDirectionSpecs=windDirectionSpecs,
-                           windSpeedSpecs=windSpeedSpecs,
-                           stepVars=stepVars)
+        
+        if df is None:
+            df = self.binAdder(windDirectionSpecs=windDirectionSpecs,
+                               windSpeedSpecs=windSpeedSpecs,
+                               stepVars=stepVars)
         
         # Exclude undesirable turbines
         powerColumns = ["pow_{:03.0f}".format(number) for number in self.referenceTurbines + self.testTurbines]     
@@ -484,13 +490,68 @@ class energyGain():
            colsToKeep.append("control_mode")
         df = df[colsToKeep + powerColumns]
         
+        # Pivot Longer
         dfLong = df.melt(id_vars=colsToKeep, value_name="power", var_name="turbine")
         dfLong["turbine"]  = [re.sub(pattern="pow_", repl="", string=i) for i in dfLong["turbine"]]
+        dfLong["turbine"] = dfLong["turbine"].to_numpy(dtype=int)
+        
+        # Add turbine label column
+        if retainTurbineLabel:
+            labels = [(num in self.testTurbines) for num in dfLong["turbine"]]
+            labels = np.where(labels, "test", "reference")
+            dfLong["turbineLabel"] = labels
+            colsToKeep.append("turbineLabel")
+        
+        # Calculating average by group
+        dfGrouped = dfLong.groupby(by=colsToKeep).agg(averagePower = pd.NamedAgg(column="power", aggfunc=np.mean),
+                                                      numObvs = pd.NamedAgg(column="power", aggfunc=len))
+        
+        # Convert grouping index into actual columns
+        for var in colsToKeep:
+            dfGrouped[var] = dfGrouped.index.get_level_values(var)
 
-        return dfLong
+        # Drop grouping indexing
+        dfGrouped.reset_index(drop=True, inplace=True)
+        
+        if returnWide:
+            dfWide = dfGrouped.pivot(columns=['turbineLabel','control_mode'], index=['directionBinLowerBound', 'speedBinLowerBound'], values='averagePower')
+            return dfWide
+        
+        return dfGrouped
+        
     
-    
-    
+    def computeAll(self, stepVars = ["direction", "speed"], df=None, 
+                   windDirectionSpecs=None, windSpeedSpecs=None):
+        if df is None:
+            df = self.binAll(windDirectionSpecs=windDirectionSpecs, windSpeedSpecs=windSpeedSpecs)
+        
+        oldCols = list(df)
+        
+        df["powerRatioBaseline"] = df[('averagePower', 'test', 'baseline')]/df[('averagePower', 'reference', 'baseline')]
+        df["powerRatioControl"] = df[('averagePower', 'test', 'control')]/df[('averagePower', 'reference', 'control')]
+        df["changeInPowerRatio"] = df['powerRatioControl'] - df['powerRatioBaseline']
+        df["percentPowerGain"] = df["changeInPowerRatio"]/df['powerRatioControl']
+        df["directionBinLowerBound"] = df.index.get_level_values("directionBinLowerBound")
+        df["speedBinLowerBound"] = df.index.get_level_values("speedBinLowerBound")
+        
+        # Also drops the nObvs, fix this later #####################
+        df.reset_index(drop=True, inplace=True)
+        df.drop(columns=oldCols, inplace=True)
+        
+        return df
+        """
+        binAllDf: df resulting from a binAll call
+        stepVars: string ("speed" or "direction") or list of the possible strings.
+            The variable(s) you want to increment by for the wind condition bins
+        """
+        groups = list(stepVars)
+        if retainControlMode:
+            groups.append("control_mode")
+        dfGrouped = binAllDf.groupby(by=groups).agg({'power':np.mean})
+        return dfGrouped
+        
+        
+        
     # Works-ish but not done, se not implemented
     # This so far cannot accept aep methods
     def compute1D(self, metricMethod, windDirectionSector=[0,360], 
