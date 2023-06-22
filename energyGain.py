@@ -80,6 +80,56 @@ class energyGain():
         self.wdCol = "wd"
         return None
     
+    def averagePower(self, windDirectionBin,windSpeedBin, 
+                     turbineList, controlMode, verbose=False):
+        """
+        Average Power for a specific wind direction bin and wind speed bin.
+        
+        windDirectionBin: list of length 2
+        windSpeedBin: list of length 2
+        controlMode: string, "baseline", "controlled", or "both"
+        wdToUse: string, name of the column with the reference wind direction.
+            Calculates a column named "wd" if None
+        wsToUse: string, name of the column with the reference wind speed.
+            Calculates a column named "ws" if None
+        """
+        
+        # Set wind direction if necessary
+        if self.wdCol==None:
+            self.setWD()
+            
+        # Set wind speed if necessary
+        if self.wsCol==None:
+            self.setWS()
+        
+        # Select relevant rows
+        dfTemp = self.df[ (self.df[self.wdCol]>= windDirectionBin[0]) &
+                          (self.df[self.wdCol]< windDirectionBin[1]) &
+                          (self.df[self.wsCol]>= windSpeedBin[0]) &
+                          (self.df[self.wsCol]< windSpeedBin[1])
+                        ]
+        
+        # Filter for control mode if necessary
+        if controlMode != "both":
+            dfTemp = dfTemp[(dfTemp['control_mode']==controlMode)]
+                            
+        # Select only the columns that are for the desired turbines
+        # This only works for up to 1000 turbines, otherwise formatting gets messed up
+        powerColumns = ["pow_{:03.0f}".format(number) for number in turbineList]
+        dfPower = dfTemp[powerColumns]
+        
+        # If the data frame is empty then this returns NaN. 
+        # This is an imperfect work around imo
+        if dfPower.empty:
+            sadMessage = f"No observations for turbines {turbineList} in {controlMode} mode for wind directions {windDirectionBin} and wind speeds {windSpeedBin}."
+            if verbose:
+                print(sadMessage)
+            return sadMessage
+        
+        avg = dfPower.mean(axis=None, skipna=True, numeric_only=True)
+     
+        return avg
+    
     def powerRatio(self, windDirectionBin, windSpeedBin, controlMode=None, 
                    useReference = True, verbose = False):
         """
@@ -141,56 +191,6 @@ class energyGain():
 
         return numerator/denominator
 
-    def averagePower(self, windDirectionBin,windSpeedBin, 
-                     turbineList, controlMode, verbose=False):
-        """
-        Average Power for a specific wind direction bin and wind speed bin.
-        
-        windDirectionBin: list of length 2
-        windSpeedBin: list of length 2
-        controlMode: string, "baseline", "controlled", or "both"
-        wdToUse: string, name of the column with the reference wind direction.
-            Calculates a column named "wd" if None
-        wsToUse: string, name of the column with the reference wind speed.
-            Calculates a column named "ws" if None
-        """
-        
-        # Set wind direction if necessary
-        if self.wdCol==None:
-            self.setWD()
-            
-        # Set wind speed if necessary
-        if self.wsCol==None:
-            self.setWS()
-        
-        # Select relevant rows
-        dfTemp = self.df[ (self.df[self.wdCol]>= windDirectionBin[0]) &
-                          (self.df[self.wdCol]< windDirectionBin[1]) &
-                          (self.df[self.wsCol]>= windSpeedBin[0]) &
-                          (self.df[self.wsCol]< windSpeedBin[1])
-                        ]
-        
-        # Filter for control mode if necessary
-        if controlMode != "both":
-            dfTemp = dfTemp[(dfTemp['control_mode']==controlMode)]
-                            
-        # Select only the columns that are for the desired turbines
-        # This only works for up to 1000 turbines, otherwise formatting gets messed up
-        powerColumns = ["pow_{:03.0f}".format(number) for number in turbineList]
-        dfPower = dfTemp[powerColumns]
-        
-        # If the data frame is empty then this returns NaN. 
-        # This is an imperfect work around imo
-        if dfPower.empty:
-            sadMessage = f"No observations for turbines {turbineList} in {controlMode} mode for wind directions {windDirectionBin} and wind speeds {windSpeedBin}."
-            if verbose:
-                print(sadMessage)
-            return sadMessage
-        
-        avg = dfPower.mean(axis=None, skipna=True, numeric_only=True)
-     
-        return avg
-    
     def changeInPowerRatio(self, windDirectionBin, windSpeedBin, useReference=None, verbose=False):
         """
         Change in Power Ratio for a specific wind direction bin and wind speed bin.
@@ -427,6 +427,70 @@ class energyGain():
         print(f"{aepGain} kWh")
         return aepGain
     
+    def binAdder(self, windDirectionSpecs,windSpeedSpecs, stepVars = "direction", copy=True):
+        """
+        Add columns for the lower bounds of the wind condition bins to df (or a copy of df)
+        
+        windDirectionSpecs: list of length 3 or 2, specifications for wind direction
+            bins-- [lower bound (inclusive), upper bound (exclusive), bin width].
+            If direction is not in stepVars, 3rd element gets ignored if it exists.
+        windSpeedSpecs: list of length 3 or 2, specifications for wind speed bins--
+            [lower bound (inclusive), upper bound (exclusive), bin width]
+            If speed is not in stepVars, 3rd element gets ignored if it exists.
+        stepVars: string ("speed" or "direction") or list of the possible strings
+        copy: boolean, whether to simply return a copy of self.df (True) or to actually update self.df (False)
+            Default is true because rows outside of the specs will be deleted
+        """
+        # Convert to list if needed
+        stepVars = list(stepVars)
+        df = self.df.copy()
+        # Filter for conditions out of the bound of interest
+        df = df[(df[self.wdCol]>=windDirectionSpecs[0]) & (df[self.wdCol]<windDirectionSpecs[1]) &
+                (df[self.wsCol]>=windSpeedSpecs[0]) & (df[self.wsCol]<windSpeedSpecs[1])]
+        
+        # Calculating the bins
+        if "direction" in stepVars:
+            df["directionBinLowerBound"] = (((df[self.wdCol]-windDirectionSpecs[0])//windDirectionSpecs[2])*windDirectionSpecs[2])+windDirectionSpecs[0]
+        if "speed" in stepVars:
+            df["speedBinLowerBound"] = (((df[self.wsCol]-windSpeedSpecs[0])//windSpeedSpecs[2])*windSpeedSpecs[2])+windSpeedSpecs[0]
+        
+        # Update self.df if desired
+        if not copy:
+            self.df = df
+            
+        # Return the copy with the bin columns
+        return df
+                
+    def binAll(self,windDirectionSpecs,windSpeedSpecs, stepVars = ["direction", "speed"], retainControlMode=True):
+        """
+        windDirectionSpecs: list of length 3 or 2, specifications for wind direction
+            bins-- [lower bound (inclusive), upper bound (exclusive), bin width].
+            If direction is not in stepVars, 3rd element gets ignored if it exists.
+        windSpeedSpecs: list of length 3 or 2, specifications for wind speed bins--
+            [lower bound (inclusive), upper bound (exclusive), bin width]
+            If speed is not in stepVars, 3rd element gets ignored if it exists.
+        stepVars: string ("speed" or "direction") or list of the possible strings
+        retainControlMode: boolean, whether to keep the control mode column (True) or not (False)
+        """
+        stepVars = list(stepVars)
+        df = self.binAdder(windDirectionSpecs=windDirectionSpecs,
+                           windSpeedSpecs=windSpeedSpecs,
+                           stepVars=stepVars)
+        
+        # Exclude undesirable turbines
+        powerColumns = ["pow_{:03.0f}".format(number) for number in self.referenceTurbines + self.testTurbines]     
+        colsToKeep = ["{}BinLowerBound".format(var) for var in stepVars]
+        if retainControlMode:
+           colsToKeep.append("control_mode")
+        df = df[colsToKeep + powerColumns]
+        
+        dfLong = df.melt(id_vars=colsToKeep, value_name="power", var_name="turbine")
+        dfLong["turbine"]  = [re.sub(pattern="pow_", repl="", string=i) for i in dfLong["turbine"]]
+
+        return dfLong
+    
+    
+    
     # Works-ish but not done, se not implemented
     # This so far cannot accept aep methods
     def compute1D(self, metricMethod, windDirectionSector=[0,360], 
@@ -452,19 +516,45 @@ class energyGain():
         # My way of dynamically allowing you to choose dim
         # not a huge fan of the way I did this tbh but it works for now
         if dim == "direction":
-            windBins = np.arange(windDirectionSector[0],
-                                 windDirectionSector[1],
-                                 by)
-            scope = [windSpeedRange[0], windSpeedRange[1]]
+            #windBins = np.arange(windDirectionSector[0],
+            #                     windDirectionSector[1],
+            #                     by)
+            #scope = [windSpeedRange[0], windSpeedRange[1]]
+                      
+            ###
+            dfTemp = self.binMaker(df=self.df,
+                                   col=self.wdCol, 
+                                   minimum=windDirectionSector[0], 
+                                   maximum=windDirectionSector[1],
+                                   step=by)
+            dfTemp = dfTemp[ (dfTemp[self.wsCol]>= windSpeedRange[0]) & (dfTemp[self.wsCol]< windSpeedRange[1])]
+            # Pivot wide to long
+            
+            powerColumns = ["pow_{:03.0f}".format(number) for number in turbineList]
+            colsToKeep = powerColumns + [self.wdCol, "binLowerBound","control_mode"]
+            colsToDrop = list()
+            dfTemp.drop()
+            
+            #dfTemp=dfScada.groupby("binLowerBound", dropna=True).mean("ws_smarteole")
+            ###
             
         else:
-            windBins = np.arange(windSpeedRange[0],
-                                 windSpeedRange[1],
-                                 by)
-            scope = [windDirectionSector[0], windDirectionSector[1]]
+            #windBins = np.arange(windSpeedRange[0],
+            #                     windSpeedRange[1],
+            #                     by)
+            #scope = [windDirectionSector[0], windDirectionSector[1]]
+            dfTemp = self.binMaker(df=pd.copy(self.df),
+                                   col=self.wdCol, 
+                                   minimum=windSpeedRange[0], 
+                                   maximum=windSpeedRange[1],
+                                   step=by)
+            
+         
+        if metricMethod is self.averagePower:
+            
+            None
             
         y = np.empty(shape=0, dtype=float)
-        se = np.empty(shape=0, dtype=float)
         
         for lowerBinBound in windBins:
             upperBinBound = lowerBinBound + by
@@ -477,7 +567,6 @@ class energyGain():
             
             if type(y_i) is str:
                 np.append(y, None)
-                np.append(se, None)
                 continue
                     
             y = np.append(y, y_i)
@@ -541,6 +630,7 @@ class energyGain():
     # Just sketching out what this method might look like, not implemented at all
     #def se(self, metricMethod, seMethod="bootstrapping", conf=0.95):
         return None
+    
     
     # Mostly 0Untested
     # if nDim is 1, cannot be used with aepGain
@@ -734,10 +824,14 @@ class energyGain():
         
         return heatmapMatrix
         
+    # change this name later
+    
+    
     # Change this name later
-    # pct power gain
+    # pct power gain only right now
     # This does NOT work, the scatterplot and line plot do not line up
-    def plot(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], x=None, y=None):
+    def plot(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], 
+             x=None, y=None, xErr=None, yErr=None):
         """
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
@@ -778,9 +872,14 @@ class energyGain():
         ax.scatter(x=x,y=y, c="red")
         #ax.plot(x,y)
         
+        if (xErr is not None) and (yErr is not None):
+            ax.errorbar(x=x, y=y,xerr=xErr, yerr=yErr, capsize=5, c="green")
+        
         plt.show()
         
         return None
+    
+
   
 # Removing this later
 # df_scada = pd.read_feather("C:/Users/ctodd/Documents/GitHub/flasc/examples_smarteole/postprocessed/df_scada_data_60s_filtered_and_northing_calibrated.ftr")
