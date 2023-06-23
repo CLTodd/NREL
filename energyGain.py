@@ -284,7 +284,6 @@ class energyGain():
         
         return (control - baseline)/baseline
         
-    # Make sure this workds for 1D
     def binAdder(self, windDirectionSpecs,windSpeedSpecs, stepVars = "direction", copy=True):
         """
         Add columns for the lower bounds of the wind condition bins to df (or a copy of df)
@@ -301,8 +300,10 @@ class energyGain():
             Default is true because rows outside of the specs will be deleted
         """
         # Convert to list if needed
-        stepVars = list(stepVars)
+        if type(stepVars) is str:
+            stepVars = list([stepVars])
         df = self.df.copy()
+        
         # Filter for conditions out of the bound of interest
         df = df[(df[self.wdCol]>=windDirectionSpecs[0]) & (df[self.wdCol]<windDirectionSpecs[1]) &
                 (df[self.wsCol]>=windSpeedSpecs[0]) & (df[self.wsCol]<windSpeedSpecs[1])]
@@ -319,8 +320,7 @@ class energyGain():
             
         # Return the copy with the bin columns
         return df
-      
-    # Make sure this works for 1d        
+             
     def binAll(self, stepVars = ["direction", "speed"], retainControlMode=True, 
                retainTurbineLabel=True,df=None, windDirectionSpecs=None,
                windSpeedSpecs=None, returnWide=True):
@@ -335,7 +335,10 @@ class energyGain():
             The variable(s) you want to increment by for the wind condition bins
         retainControlMode: boolean, whether to keep the control mode column (True) or not (False)
         """
-        stepVars = list(stepVars)
+        if type(stepVars) is str:    
+            stepVars = list([stepVars])
+        
+        stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
         
         if df is None:
             df = self.binAdder(windDirectionSpecs=windDirectionSpecs,
@@ -344,13 +347,15 @@ class energyGain():
         
         # Exclude undesirable turbines
         powerColumns = ["pow_{:03.0f}".format(number) for number in self.referenceTurbines + self.testTurbines]     
-        colsToKeep = ["{}BinLowerBound".format(var) for var in stepVars]
+        colsToKeep = stepVarCols[:]
         if retainControlMode:
            colsToKeep.append("control_mode")
         df = df[colsToKeep + powerColumns]
         
         # Pivot Longer
         dfLong = df.melt(id_vars=colsToKeep, value_name="power", var_name="turbine")
+        
+        # Convert turbine numbers from strings to integers
         dfLong["turbine"]  = [re.sub(pattern="pow_", repl="", string=i) for i in dfLong["turbine"]]
         dfLong["turbine"] = dfLong["turbine"].to_numpy(dtype=int)
         
@@ -362,20 +367,25 @@ class energyGain():
             colsToKeep.append("turbineLabel")
         
         # Calculating average by group
-        dfGrouped = dfLong.groupby(by=colsToKeep).agg(averagePower = pd.NamedAgg(column="power", aggfunc=np.mean),
-                                                      numObvs = pd.NamedAgg(column="power", aggfunc=len))
+        dfGrouped = dfLong.groupby(by=colsToKeep).agg(averagePower = pd.NamedAgg(column="power", 
+                                                                                 aggfunc=np.mean),
+                                                      numObvs = pd.NamedAgg(column="power", 
+                                                                            aggfunc=len))
         
-        # Convert grouping index into actual columns
+        # Convert grouping index into columns for easier pivoting
         for var in colsToKeep:
             dfGrouped[var] = dfGrouped.index.get_level_values(var)
-
-        # Drop grouping indexing
-        dfGrouped.reset_index(drop=True, inplace=True)
-        
+            
+        # Pivot wider     
         if returnWide:
-            dfWide = dfGrouped.pivot(columns=['turbineLabel','control_mode'], index=['directionBinLowerBound', 'speedBinLowerBound'], values=['averagePower', 'numObvs'])
+            optionalCols = list( set(colsToKeep) - set(stepVarCols))
+            #breakpoint()
+            dfWide = dfGrouped.pivot(columns=optionalCols, index=stepVarCols, 
+                                     values=['averagePower', 'numObvs'])
             return dfWide
         
+        # Don't need these columns anymore since they are a part of the multi-index
+        dfGrouped.drop(columns=colsToKeep, inplace=True)
         return dfGrouped
         
     # Make sure this works for 1d
@@ -389,7 +399,7 @@ class energyGain():
         ----------
         stepVars : TYPE, optional
             DESCRIPTION. The default is ["direction", "speed"].
-        df : pandas data frame as returned from binAll, optional
+        df : pandas data frame as returned from binAll with returnWide=True, optional
             Calls binAll if None.
         windDirectionSpecs : TYPE, optional
             DESCRIPTION. The default is None.
@@ -488,7 +498,7 @@ class energyGain():
                 df["aepGainContribution"] = df["aepGainContribution"]*(1/denom)
         
             
-        return hours*np.nansum(df[('aepContribution', '', '')])
+        return hours*np.nansum(df[('aepGainContribution', '', '')])
      
     # The goal is to modify computeAll so that compute1D and compute2D can be retired
     # Works-ish but not done, se not implemented
