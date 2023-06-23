@@ -411,23 +411,33 @@ class energyGain():
         df : pandas data frame
             Nicely formatted dataframe that can go directly into aepGain.
         """
+        if type(stepVars) is str:    
+            stepVars = list([stepVars])
+            
         if df is None:
-            df = self.binAll(windDirectionSpecs=windDirectionSpecs, windSpeedSpecs=windSpeedSpecs)
+            df = self.binAll(stepVars = stepVars, 
+                             windDirectionSpecs=windDirectionSpecs,
+                             windSpeedSpecs=windSpeedSpecs,
+                             df=df)
         #breakpoint()
-        df["powerRatioBaseline"] = np.divide(df[('averagePower', 'test', 'baseline')], 
-                                             df[('averagePower', 'reference', 'baseline')])
-        df["powerRatioControl"] = np.divide(df[('averagePower', 'test', 'controlled')],
-                                            df[('averagePower', 'reference', 'controlled')])
+        df["powerRatioBaseline"] = np.divide(df[('averagePower', 'baseline', 'test')], 
+                                             df[('averagePower', 'baseline', 'reference')])
+        df["powerRatioControl"] = np.divide(df[('averagePower', 'controlled', 'test')],
+                                            df[('averagePower', 'controlled', 'reference')])
         df["changeInPowerRatio"] = np.subtract(df['powerRatioControl'],
                                                df['powerRatioBaseline'])
         df["percentPowerGain"] = np.divide(df["changeInPowerRatio"],
                                            df['powerRatioControl'])
-        df["totalNumObvs"] = np.add(np.add(np.add(df[('numObvs', 'test', 'controlled')], 
-                                                  df[('numObvs', 'reference', 'controlled')]), 
-                                           df[('numObvs', 'test', 'baseline')]), 
-                                    df[('numObvs', 'reference', 'baseline')])
-        df["directionBinLowerBound"] = df.index.get_level_values("directionBinLowerBound")
-        df["speedBinLowerBound"] = df.index.get_level_values("speedBinLowerBound")
+        df["totalNumObvs"] = np.add(np.add(np.add(df[('numObvs', 'controlled', 'test')], 
+                                                  df[('numObvs', 'controlled', 'reference')]), 
+                                           df[('numObvs', 'baseline', 'test')]), 
+                                    df[('numObvs', 'baseline', 'reference')])
+        
+        # Make columns out of the indices just because it's easier to see sometimes
+        stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
+        for var in stepVarCols:
+            df[var] = df.index.get_level_values(var)
+        
         return df
     
     # This doesn't yet work for when reference turbines are excluded
