@@ -32,20 +32,23 @@ class energyGain():
         """
         #breakpoint()
         self.df = df
+        self.dfLong=None
         self.dfUpstream = dfUpstream
         self.testTurbines = testTurbines
         self.referenceTurbines = refTurbines
         self.wdCol = wdCol
         self.wsCol = wsCol
         self.useReference = useReference
+        
         # Set the columns to be referenced for wind speed and direction if not given   
         if self.wdCol == None:
             self.setWD() 
         if self.wsCol==None:
             self.setWS()
-            
+        
         # quick fix for now
         if df is not None:
+            self.__dfLonger__()
             self.allTurbines = [int(re.sub("\D+","",colname)) for colname in list(df) if re.match('^pow_\d+', colname)]
         else:
             self.allTurbines = None
@@ -65,6 +68,7 @@ class energyGain():
         # Set reference wind speed and direction for the data frame
         self.df = dfm.set_ws_by_upstream_turbines(self.df, self.dfUpstream, exclude_turbs=exc)
         self.wsCol = "ws"
+        self.__dfLonger__()
         return None
     
     def setWD(self, colname=None):
@@ -78,7 +82,28 @@ class energyGain():
         
         self.df = dfm.set_wd_by_all_turbines(self.df)
         self.wdCol = "wd"
+        self.__dfLonger__()
         return None
+    
+    def __dfLonger__(self):
+        df = self.df
+        powerColumns = ["pow_{:03.0f}".format(number) for number in self.referenceTurbines + self.testTurbines]
+        keep = powerColumns + [self.wdCol, self.wsCol, "time"]
+        df[keep].melt(value_vars=powerColumns,
+                      value_name="power",
+                      var_name="turbine", 
+                      id_vars=['time', 'wd_smarteole', 'ws_smarteole'])
+        df.set_index(df["time"],inplace=True, drop=True)
+        self.dfLong = df
+        return None
+               
+    def setReference(self, lst):
+        self.referenceTurbines = lst
+        self.__dfLonger__()
+    
+    def setTest(self, lst):
+        self.testTurbines = lst
+        self.__dfLonger__()
     
     def averagePower(self, windDirectionBin,windSpeedBin, 
                      turbineList, controlMode, verbose=False):
@@ -283,7 +308,7 @@ class energyGain():
             return sadMessage
         
         return (control - baseline)/baseline
-        
+    
     def binAdder(self, stepVars = "direction", windDirectionSpecs=[190,250,1],windSpeedSpecs=[0,20,1], copy=True):
         """
         Add columns for the lower bounds of the wind condition bins to df (or a copy of df)
@@ -323,7 +348,7 @@ class energyGain():
              
     def binAll(self, stepVars = ["direction", "speed"], windDirectionSpecs=[190,250,1],
                windSpeedSpecs=[0,20,1], retainControlMode=True, 
-               retainTurbineLabel=True,  returnWide=True, df=None):
+               retainTurbineLabel=True,  returnWide=True, df=None, group=True):
         """
         windDirectionSpecs: list of length 3 or 2, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width].
@@ -338,14 +363,14 @@ class energyGain():
         if type(stepVars) is str:    
             stepVars = list([stepVars])
         
-        stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
-        
+
         if df is None:
             df = self.binAdder(windDirectionSpecs=windDirectionSpecs,
                                windSpeedSpecs=windSpeedSpecs,
                                stepVars=stepVars)
         
         # Exclude undesirable turbines
+        stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
         powerColumns = ["pow_{:03.0f}".format(number) for number in self.referenceTurbines + self.testTurbines]     
         colsToKeep = stepVarCols[:]
         if retainControlMode:
@@ -365,12 +390,15 @@ class energyGain():
             labels = np.where(labels, "test", "reference")
             dfLong["turbineLabel"] = labels
             colsToKeep.append("turbineLabel")
+            
+        if not group:
+            return dfLong
         
         # Calculating average by group
         dfGrouped = dfLong.groupby(by=colsToKeep).agg(averagePower = pd.NamedAgg(column="power", 
                                                                                  aggfunc=np.mean),
                                                       numObvs = pd.NamedAgg(column="power", 
-                                                                            aggfunc=len))
+                                                                            aggfunc='count'))
         
         # Convert grouping index into columns for easier pivoting
         for var in colsToKeep:
@@ -544,6 +572,35 @@ class energyGain():
         aep = hours*np.nansum(df[('aepGainContribution', '', '')])    
         print(aep)
         return (df, aep)
+    
+    def bootstrapSamples(self, B, grouping='time', stepVars = ["direction", "speed"], 
+                  windDirectionSpecs=[190,250,1], windSpeedSpecs=[0,20,1],
+                  useReference=True, df=None,seed=None):
+        
+        prng = np.random.default_rng(seed)
+        samples = np.ndarray(B, dtype=pd.core.frame.DataFrame)
+        
+        if grouping is None:
+            nreps = self.dfLong.shape[0]
+            bootstrapIdx = prng.choice(nreps, size=(B, nreps), replace=True)
+            df = self.dfLong.copy
+        elif grouping=='time':
+            nreps = self.dfshape[0]
+            df = self.df.copy
+        elif grouping=='turbine':
+            # think more about this
+            None
+            
+        for rep in range(B):
+            indices = bootstrapIdx[rep]
+            # Get the sample for this bootstrap rep   
+            dfTemp = df.iloc[indices]
+            dfTemp.reset_index(drop=True, inplace=True)
+            samples[rep] = dfTemp
+
+        return samples
+    
+
     
     # Need to completely rewrite this so that it works with computeAll
     def bootstrapEstimate(self, metricMethod=None, nDim=1, windDirectionSector=[0,360], 
