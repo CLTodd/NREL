@@ -11,7 +11,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from timeit import default_timer
-import re # can probably figure out a way to not use this
+import re
 from flasc.dataframe_operations import dataframe_manipulations as dfm
  
 
@@ -283,150 +283,8 @@ class energyGain():
             return sadMessage
         
         return (control - baseline)/baseline
-    
-    def aepGain(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1],
-                    hours=8760, AEPmethod=1, absolute=False, useReference=None):
         
-        """
-        'Annual' energy production gain based on wind condition bin frequencies.
-        
-        windDirectionSpecs: list of length 3, specifications for wind direction
-            bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
-        windSpeedSpecs: list of length 3, specifications for wind speed bins--
-            [lower bound (inclusive), upper bound (exclusive), bin width]
-        hours: numeric, defaults to number of hours in a year
-        AEPmethod: integer, the method used to calculate AEP;
-            either 1 or 2 based on the order they appear on the slides
-        absolute: Boolean, whether to compute absolute AEP gain (True) or 
-            percent AEP gain (False)
-        useReference: Boolean, wheter to compare Test turbines to Reference 
-            turbines (True) or Test turbines to themselves in control mode
-            versus baseline mode (False).
-        """
-        # For frequency checks
-        freqTracker=0
-        
-        # Wanted to add this to give flexibility to not use the reference for 
-        # one particular method, but part of me feels like this is just confusing 
-        # or a bad idea. Might take it away and just always use the object attribute
-        if useReference is None:
-            useReference = self.useReference
-        
-        # Which power columns are we interested in
-        if useReference:
-            powerColumns = [f'pow_{i:03d}' for i in self.testTurbines+self.referenceTurbines]
-        else:
-            powerColumns = [f'pow_{i:03d}' for i in self.testTurbines]
-        
-        # dataframe of only the power columns of interest and the corresponding
-        # power observations for observations in the wind condition bin
-        powerDF = self.df[list((self.df[self.wdCol]>= windDirectionSpecs[0]) &
-                               (self.df[self.wdCol]< windDirectionSpecs[1]) &
-                               (self.df[self.wsCol]>= windSpeedSpecs[0]) &
-                               (self.df[self.wsCol]< windSpeedSpecs[1])),
-                          powerColumns]
-        # Use this to calculate frequencies later
-        N = powerDF.size
-        
-        # Set up wind condition bins
-        windDirectionBins = np.arange(windDirectionSpecs[0],
-                                      windDirectionSpecs[1],
-                                      windDirectionSpecs[2])
-        
-        windSpeedBins = np.arange(windSpeedSpecs[0],
-                                  windSpeedSpecs[1],
-                                  windSpeedSpecs[2])
-        
-        absoluteSum = 0
-        normalizingConstant = 0
-        for speed in windSpeedBins:
-            
-            # Calculate wind condition bin bounds
-            upperSpeed = speed + windSpeedSpecs[2]
-            
-            for direction in windDirectionBins:
-                
-                # Calculate wind condition bin bounds
-                upperDirection = direction + windDirectionSpecs[2]
-                
-                # Calculate wind condition bin frequency
-                freq = powerDF[(self.df[self.wdCol]>= direction) &
-                               (self.df[self.wdCol]< upperDirection) &
-                               (self.df[self.wsCol]>= speed) &
-                               (self.df[self.wsCol]< upperSpeed)
-                              ].size/N
-                
-                freqTracker += freq
-                
-                # If we aren't using reference turbines, the absolute and 
-                # relative AEP formulas are the same for both methods
-                if not useReference:
-                    # Set average power to one
-                    avgPwr = 1
-                    
-                    # Compute change metric
-                    avgPwrTestContr = self.averagePower([direction, upperDirection],
-                                                    [speed, upperSpeed],
-                                                    self.testTurbines, "controlled")
-                    avgPwrTestBase = self.averagePower([direction, upperDirection],
-                                                   [speed, upperSpeed],
-                                                   self.testTurbines, "baseline")
-                    changeMetric = avgPwrTestContr - avgPwrTestBase
-                    
-                # With Reference turbines, summation formula differs depending on AEP method
-                elif AEPmethod==1:
-                    changeMetric = self.percentPowerGain([direction, upperDirection],
-                                                         [speed, upperSpeed])
-                
-                    avgPwr = self.averagePower([direction, upperDirection],
-                                               [speed, upperSpeed],
-                                               self.testTurbines,
-                                               "baseline")
-                else:# (If AEPmethod==2)
-                    changeMetric = self.changeInPowerRatio([direction, upperDirection],
-                                                           [speed, upperSpeed])
-                    
-                    avgPwr = self.averagePower([direction, upperDirection],
-                                               [speed, upperSpeed],
-                                               self.testTurbines,
-                                               "both")
-                
-                # Think about what's the best way to handle lack of data in either baseline or control
-                if (freq==0) or (type(avgPwr) is str) or (type(changeMetric) is str):
-                    continue
-                
-                # Increment the absolute sum
-                absoluteSum += ( freq * changeMetric * avgPwr)
-                
-                 
-                if not absolute:
-                    # Increment the normalizing constant for % gain AEP
-                    if not useReference:
-                        # If we aren't using reference turbines, % gain AEP is the same for both AEP methods
-                        normalizingConstant += (freq*avgPwrTestBase)
-                    elif AEPmethod==1:
-                        normalizingConstant += (freq*changeMetric)
-                    else: #(AEPmethod==2)
-                        pwrRatio = self.powerRatio([direction, upperDirection],
-                                                   [speed, upperSpeed],"baseline")
-                        normalizingConstant += (freq*pwrRatio*avgPwr)
-        
-        print(freqTracker) # frequency check
-        
-        # Percent AEP gain results
-        if normalizingConstant == 0:
-            # This seems like an imperfect solution
-            print("Normalizing constant is 0, returning absolute AEP instead")
-        else:
-            pctGainAEP = 100*(absoluteSum/normalizingConstant)
-            print(f"{pctGainAEP}%")
-            return pctGainAEP
-        
-        # Absolute AEP Gain results
-        aepGain = hours*absoluteSum
-        print(f"{aepGain} kWh")
-        return aepGain
-    
+    # Make sure this workds for 1D
     def binAdder(self, windDirectionSpecs,windSpeedSpecs, stepVars = "direction", copy=True):
         """
         Add columns for the lower bounds of the wind condition bins to df (or a copy of df)
@@ -461,7 +319,8 @@ class energyGain():
             
         # Return the copy with the bin columns
         return df
-              
+      
+    # Make sure this works for 1d        
     def binAll(self, stepVars = ["direction", "speed"], retainControlMode=True, 
                retainTurbineLabel=True,df=None, windDirectionSpecs=None,
                windSpeedSpecs=None, returnWide=True):
@@ -514,44 +373,124 @@ class energyGain():
         dfGrouped.reset_index(drop=True, inplace=True)
         
         if returnWide:
-            dfWide = dfGrouped.pivot(columns=['turbineLabel','control_mode'], index=['directionBinLowerBound', 'speedBinLowerBound'], values='averagePower')
+            dfWide = dfGrouped.pivot(columns=['turbineLabel','control_mode'], index=['directionBinLowerBound', 'speedBinLowerBound'], values=['averagePower', 'numObvs'])
             return dfWide
         
         return dfGrouped
         
-    
+    # Make sure this works for 1d
+    # Fix comments later
     def computeAll(self, stepVars = ["direction", "speed"], df=None, 
                    windDirectionSpecs=None, windSpeedSpecs=None):
+        """
+        Computes all the things from the slides except AEP gain
+
+        Parameters
+        ----------
+        stepVars : TYPE, optional
+            DESCRIPTION. The default is ["direction", "speed"].
+        df : pandas data frame as returned from binAll, optional
+            Calls binAll if None.
+        windDirectionSpecs : TYPE, optional
+            DESCRIPTION. The default is None.
+        windSpeedSpecs : TYPE, optional
+            DESCRIPTION. The default is None.
+
+        Returns
+        -------
+        df : pandas data frame
+            Nicely formatted dataframe that can go directly into aepGain.
+        """
         if df is None:
             df = self.binAll(windDirectionSpecs=windDirectionSpecs, windSpeedSpecs=windSpeedSpecs)
-        
-        oldCols = list(df)
-        
-        df["powerRatioBaseline"] = df[('averagePower', 'test', 'baseline')]/df[('averagePower', 'reference', 'baseline')]
-        df["powerRatioControl"] = df[('averagePower', 'test', 'control')]/df[('averagePower', 'reference', 'control')]
-        df["changeInPowerRatio"] = df['powerRatioControl'] - df['powerRatioBaseline']
-        df["percentPowerGain"] = df["changeInPowerRatio"]/df['powerRatioControl']
+        #breakpoint()
+        df["powerRatioBaseline"] = np.divide(df[('averagePower', 'test', 'baseline')], 
+                                             df[('averagePower', 'reference', 'baseline')])
+        df["powerRatioControl"] = np.divide(df[('averagePower', 'test', 'controlled')],
+                                            df[('averagePower', 'reference', 'controlled')])
+        df["changeInPowerRatio"] = np.subtract(df['powerRatioControl'],
+                                               df['powerRatioBaseline'])
+        df["percentPowerGain"] = np.divide(df["changeInPowerRatio"],
+                                           df['powerRatioControl'])
+        df["totalNumObvs"] = np.add(np.add(np.add(df[('numObvs', 'test', 'controlled')], 
+                                                  df[('numObvs', 'reference', 'controlled')]), 
+                                           df[('numObvs', 'test', 'baseline')]), 
+                                    df[('numObvs', 'reference', 'baseline')])
         df["directionBinLowerBound"] = df.index.get_level_values("directionBinLowerBound")
         df["speedBinLowerBound"] = df.index.get_level_values("speedBinLowerBound")
-        
-        # Also drops the nObvs, fix this later #####################
-        df.reset_index(drop=True, inplace=True)
-        df.drop(columns=oldCols, inplace=True)
-        
         return df
+    
+    # This doesn't yet work for when reference turbines are excluded
+    # Fix comments later
+    def aepGain(self, df=None, windDirectionSpecs=None, windSpeedSpecs=None, hours=8760, aepMethod=1, absolute=False):
         """
-        binAllDf: df resulting from a binAll call
-        stepVars: string ("speed" or "direction") or list of the possible strings.
-            The variable(s) you want to increment by for the wind condition bins
+        Calculates AEP gain  
+
+        Parameters
+        ----------
+        df : pandas data frame as returned by computeAll, optional
+            If None, calls computeAll
+        windDirectionSpecs : list, optional
+            DESCRIPTION. The default is None.
+        windSpeedSpecs : list, optional
+            DESCRIPTION. The default is None.
+        hours : float, optional
+            DESCRIPTION. The default is 8760.
+        aepMethod : int, optional
+            DESCRIPTION. The default is 1.
+        absolute : boolean, optional
+            DESCRIPTION. The default is False.
+
+        Returns
+        -------
+        AEP gain (float)
+
         """
-        groups = list(stepVars)
-        if retainControlMode:
-            groups.append("control_mode")
-        dfGrouped = binAllDf.groupby(by=groups).agg({'power':np.mean})
-        return dfGrouped
+        # Calculate nicely formatted df if needed
+        if df is None:
+            df = self.computeAll(windDirectionSpecs=windDirectionSpecs,
+                                 windSpeedSpecs=windSpeedSpecs)
+        # Use correct AEP formula
+        if aepMethod==1:
+            df["aepGainContribution"] = np.multiply(np.multiply(df[('averagePower', 'test', 'baseline')],
+                                                            df[('percentPowerGain', '', '')]),
+                                                df[('totalNumObvs', '', '')])
+            if not absolute:
+                # 'hours' here doesn't really represent hours, 
+                # this is just so that our percentages are reported nicely
+                hours = 100
+                denom = np.multiply(df[('totalNumObvs', '', '')],
+                                    df[('averagePower', 'test', 'baseline')])
+                denom = np.nansum(denom)
+                df["aepGainContribution"] = df["aepGainContribution"]*(1/denom)
+            
+        elif aepMethod==2:
+            # Couldn't find an element-wise weighter mean, so I did this
+            sumPowerRefBase = np.multiply(df[('averagePower', 'reference', 'baseline')],
+                                          df[('numObvs', 'reference', 'baseline')])
+            sumPowerRefcontrolled = np.multiply(df[('averagePower', 'reference', 'controlled')],
+                                          df[('numObvs', 'reference', 'controlled')])
+            sumPowerRef = np.add(sumPowerRefBase, sumPowerRefcontrolled)
+            numObvsRef = np.add(df[('numObvs', 'reference', 'controlled')], df[('numObvs', 'reference', 'baseline')])
+            avgPowerRef = np.divide(sumPowerRef, numObvsRef)
+            
+            df["aepGainContribution"] = np.multiply(np.multiply(df[('averagePower', 'test', 'baseline')],
+                                                            df[('changeInPowerRatio', '', '')]),
+                                                avgPowerRef)
+            if not absolute:
+                # 'hours' here doesn't really represent hours, 
+                # this is just so that our percentages are reported nicely
+                hours = 100
+                denom = np.multiply(np.multiply(df[('totalNumObvs', '', '')],
+                                                df[('powerRatioBaseline', '', '')]),
+                                    avgPowerRef)
+                denom = np.nansum(denom)
+                df["aepGainContribution"] = df["aepGainContribution"]*(1/denom)
         
-        
-        
+            
+        return hours*np.nansum(df[('aepContribution', '', '')])
+     
+    # The goal is to modify computeAll so that compute1D and compute2D can be retired
     # Works-ish but not done, se not implemented
     # This so far cannot accept aep methods
     def compute1D(self, metricMethod, windDirectionSector=[0,360], 
@@ -692,9 +631,7 @@ class energyGain():
     #def se(self, metricMethod, seMethod="bootstrapping", conf=0.95):
         return None
     
-    
-    # Mostly 0Untested
-    # if nDim is 1, cannot be used with aepGain
+    # Need to completely rewrite this so that it works with computeAll
     def bootstrapEstimate(self, metricMethod=None, nDim=1, windDirectionSector=[0,360], 
                           windSpeedRange=[0,20], by=1, dim="direction", 
                           windDirectionSpecs=[0,360,1], 
@@ -720,7 +657,6 @@ class energyGain():
              (dim for dimension as in 1D). Either "direction" or "speed".
              Only used if nDim=1
         by: step size for the bins for dim. Only used if nDim=1.
-        
 
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
@@ -729,6 +665,7 @@ class energyGain():
             [lower bound (inclusive), upper bound (exclusive), bin width]
             Only used if nDim=2
         """
+        
         # Assuming valid inputs
         start = default_timer()
         Shape = self.df.shape
@@ -899,6 +836,7 @@ class energyGain():
         windSpeedSpecs: list of length 3, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
         """
+        
         # If all data is missing, calculate some default
         if (x is None) and (y is None):
             resultDict = self.compute1D(self.percentPowerGain, windDirectionSpecs[0:2],
@@ -950,8 +888,4 @@ class energyGain():
 # referenceTurbines = [0,1,2,6]
 # df_scadaNoNan = df_scada.dropna(subset=[f'pow_{i:03d}' for i in testTurbines+referenceTurbines])
 # thing = energyGain(df_scadaNoNan, dfUpstream, testTurbines, referenceTurbines,wdCol="wd_smarteole", wsCol="ws_smarteole")
-# thing.plot([190,250,5],[0,20,1])
-    
-    
-    
-    
+# thing.plot([190,250,5],[0,20,1]) 
