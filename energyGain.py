@@ -309,7 +309,7 @@ class energyGain():
         
         return (control - baseline)/baseline
     
-    def binAdder(self, stepVars = "direction", windDirectionSpecs=[190,250,1],windSpeedSpecs=[0,20,1], copy=True):
+    def binAdder(self, stepVars = "direction", windDirectionSpecs=[190,250,1],windSpeedSpecs=[0,20,1], copy=True, df=None):
         """
         Add columns for the lower bounds of the wind condition bins to df (or a copy of df)
         
@@ -327,7 +327,9 @@ class energyGain():
         # Convert to list if needed
         if type(stepVars) is str:
             stepVars = list([stepVars])
-        df = self.df.copy()
+        
+        if df is None:
+            df = self.df.copy()
         
         # Filter for conditions out of the bound of interest
         df = df[(df[self.wdCol]>=windDirectionSpecs[0]) & (df[self.wdCol]<windDirectionSpecs[1]) &
@@ -419,7 +421,7 @@ class energyGain():
     # Fix comments later
     def computeAll(self, stepVars = ["direction", "speed"], 
                    windDirectionSpecs=[190,250,1], windSpeedSpecs=[0,20,1],
-                   useReference=True, df=None):
+                   useReference=True, df=None, multiIdxAsCol=False):
         """
         Computes all the things from the slides except AEP gain
 
@@ -458,6 +460,8 @@ class energyGain():
                                                       df[('numObvs', 'baseline', 'test')],
                                                       df[('numObvs', 'baseline', 'reference')])),
                                            axis=2)[0]
+            
+            
         else:
             df["powerRatioBaseline"] = df[('averagePower', 'baseline', 'test')]
             df["powerRatioControl"] = df[('averagePower', 'controlled', 'test')]
@@ -473,6 +477,8 @@ class energyGain():
                                            axis=2)[0]
         
         # Same for both AEP methods
+        N = np.nansum(df["totalNumObvs"])
+        df["freq"] = df["totalNumObvs"]/N
         df["changeInPowerRatio"] = np.subtract(df['powerRatioControl'],
                                            df['powerRatioBaseline'])
         
@@ -532,18 +538,17 @@ class energyGain():
             if useReference:
                 df["aepGainContribution"] = np.multiply(np.multiply(df[('averagePower', 'baseline', 'test')],
                                                                 df[('percentPowerGain', '', '')]),
-                                                    df[('totalNumObvs', '', '')])
+                                                    df[('freq', '', '')])
             else:
-                df["aepGainContribution"] = np.multiply(df["changeInPowerRatio"], df[('totalNumObvs', '', '')])
+                df["aepGainContribution"] = np.multiply(df["changeInPowerRatio"], df[('freq', '', '')])
     
             
             if not absolute:
-                denom = np.multiply(df[('totalNumObvs', '', '')],
-                                    df[('averagePower', 'baseline', 'test')])
+                denom = np.multiply(df[('averagePower', 'baseline', 'test')], df[('freq', '', '')])
             
         else:
             # Couldn't find an element-wise weighted mean, so I did this
-            sumPowerRefBase = np.multiply(df[('averagePower', 'baseline', 'test')],
+            sumPowerRefBase = np.multiply(df[('averagePower', 'baseline', 'reference')],
                                           df[('numObvs', 'baseline', 'reference')])
             sumPowerRefcontrolled = np.multiply(df[('averagePower', 'controlled', 'reference')],
                                           df[('numObvs', 'controlled', 'reference')])
@@ -554,13 +559,13 @@ class energyGain():
             
             avgPowerRef = np.divide(sumPowerRef, numObvsRef)
             
-            df["aepGainContribution"] = np.multiply(np.multiply(df[('averagePower', 'baseline', 'test')],
-                                                            df[('changeInPowerRatio', '', '')]),
-                                                avgPowerRef)
+            df["aepGainContribution"] = np.multiply(np.multiply(avgPowerRef,
+                                                              df[('changeInPowerRatio', '', '')]),
+                                                  df[('freq', '', '')])
             if not absolute:
-                denom = np.multiply(np.multiply(df[('totalNumObvs', '', '')],
-                                                df[('powerRatioBaseline', '', '')]),
-                                    avgPowerRef)
+                denom = np.multiply(np.multiply(avgPowerRef,
+                                              df[('powerRatioBaseline', '', '')]),
+                                  df[('freq', '', '')])
                 
         if not absolute:
             # 'hours' here doesn't really represent hours, 
@@ -604,34 +609,17 @@ class energyGain():
         
         return samples
     
-
-    
+  
     # Need to completely rewrite this so that it works with computeAll
-    def bootstrapEstimate(self, metricMethod=None, nDim=1, windDirectionSector=[0,360], 
-                          windSpeedRange=[0,20], by=1, dim="direction", 
-                          windDirectionSpecs=[0,360,1], 
-                          windSpeedSpecs=[0,20,1], 
+    def bootstrapEstimate(self, stepVars, windDirectionSpecs, windSpeedSpecs,
+                          B=1000, seed=None, metric="percentPowerGain",
+                          grouping='time', useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
-                          B=1000, seed=None, retainReps = False,):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
+                          retainReps = False):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
         
-        nDim: int, 1 or 2; Number of directions along which to compute the 
-            metric-- i.e., make bins based on just wind speed or direction or 
-            make 2D bins based on both
-        metricMethod: Method, the method you want to use to compute the 
-             measurements in each wind condition bin (not implemented yet)
-         
-        windDirectionSector: list of length 2, specifications for wind direction
-             bins-- [lower bound (inclusive), upper bound (exclusive)]. 
-             Only used if nDim=1
-        windSpeedRange: list of length 2, specifications for wind speed bins--
-             [lower bound (inclusive), upper bound (exclusive)]
-             Only used if nDim=1
-        dim: string, the varaible you want to compute the metric as a function of
-             (dim for dimension as in 1D). Either "direction" or "speed".
-             Only used if nDim=1
-        by: step size for the bins for dim. Only used if nDim=1.
+        metric = string, one of changeInPowerRatio, percentPowerGain
 
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
@@ -640,10 +628,12 @@ class energyGain():
             [lower bound (inclusive), upper bound (exclusive), bin width]
             Only used if nDim=2
         """
-        
+        if type(stepVars) is str:    
+            stepVars = list([stepVars])
+            
         # Assuming valid inputs
         start = default_timer()
-        Shape = self.df.shape
+        #Shape = self.df.shape
         resultDict = {"mean": None,
                       "meanMinusSE": None,
                       "meanPlusSE": None,
@@ -651,8 +641,39 @@ class energyGain():
                       "upperPercentile": None,
                       "lowerPercentile": None}
         
-        boostrapDFs = self.bootstrapSamples(self, B, grouping='time', seed=None)
+        boostrapDFs = self.bootstrapSamples(self, B, grouping, seed)
         
+        nones = np.full(shape=B, fill_value=None, dtype=float)
+        metricDict = {metric: nones}
+        finalCols = list([metric])
+        finalColsMultiIdx = list([(metric, '','')])
+        
+        for var in stepVars:
+            metricDict[var] = nones
+            name = f'{var}BinLowerBound'
+            finalCols.append(name)
+            finalColsMultiIdx.append((name,'',''))
+            
+        metricDF = pd.DatFrame(metricDict)
+        metricDF = metricDF[finalCols]
+        
+        for boostrap in range(B):
+            currentDF = boostrapDFs[boostrap]
+            # get into correct format
+            binadder =self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs, df=currentDF)
+            binall = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, df=binadder)
+            computeall = self.computeAll(stepVars, windDirectionSpecs,
+                                         windSpeedSpecs, useReference, df=binall)
+            binStats = computeall[finalColsMultiIdx]
+            # Multi-index on the columns makes indexing annoying when all but one level is empty
+            dfTemp = binStats.reset_index(drop=True).droplevels(levels=[1,2], axis="columns")
+            # Make sure columns are in the right order
+            dfTemp = dfTemp[finalCols]
+            metricDF = pd.concat([metricDF, dfTemp],axis=0)
+            
+            
+        # Compute Sampling distribution statistics for each wind condition bin
+            
         if nDim==1:
 
             if dim == "direction":
