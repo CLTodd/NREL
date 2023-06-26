@@ -544,7 +544,7 @@ class energyGain():
     
             
             if not absolute:
-                denom = np.multiply(df[('averagePower', 'baseline', 'test')], df[('freq', '', '')])
+                denomTerms = np.multiply(df[('averagePower', 'baseline', 'test')], df[('freq', '', '')])
             
         else:
             # Couldn't find an element-wise weighted mean, so I did this
@@ -563,15 +563,16 @@ class energyGain():
                                                               df[('changeInPowerRatio', '', '')]),
                                                   df[('freq', '', '')])
             if not absolute:
-                denom = np.multiply(np.multiply(avgPowerRef,
+                denomTerms = np.multiply(np.multiply(avgPowerRef,
                                               df[('powerRatioBaseline', '', '')]),
                                   df[('freq', '', '')])
+                
                 
         if not absolute:
             # 'hours' here doesn't really represent hours, 
             # this is just so that our percentages are reported nicely
             hours = 100
-            denom = np.nansum(denom)
+            denom = np.nansum(denomTerms)
             df["aepGainContribution"] = df["aepGainContribution"]*(1/denom)
         
         aep = hours*np.nansum(df[('aepGainContribution', '', '')])    
@@ -581,28 +582,19 @@ class energyGain():
     def bootstrapSamples(self, B=1000, grouping='time', seed=None):
         
         start = default_timer()
-        prng = np.random.default_rng(seed)
         samples = np.ndarray(B, dtype=pd.core.frame.DataFrame)
         
         
         # Sampling rows from different data frames depending on the sampling scheme
         if grouping is None:
-            nRows = self.dfLong.shape[0]
-
             df = self.dfLong.copy()
         elif grouping=='time':
-            nRows = self.df.shape[0]
             df = self.df.copy()
             
-        bootstrapIdx = prng.choice(nRows, size=(B, nRows), replace=True)
-            
+
         # Do the actual bootstrapping
         for rep in range(B):
-            indices = bootstrapIdx[rep]
-            # Get the sample for this bootstrap rep   
-            dfTemp = df.iloc[indices]
-            dfTemp.reset_index(drop=True, inplace=True)
-            samples[rep] = dfTemp
+            samples[rep] = df.sample(frac=1,replace=True,random_state=seed).reset_index(drop=True, inplace=True)
             
         duration = default_timer() - start
         print("Sampling Time:", duration)
@@ -641,7 +633,7 @@ class energyGain():
                       "upperPercentile": None,
                       "lowerPercentile": None}
         
-        boostrapDFs = self.bootstrapSamples(self, B, grouping, seed)
+        boostrapDFs = self.bootstrapSamples(B, grouping, seed)
         
         nones = np.full(shape=B, fill_value=None, dtype=float)
         metricDict = {metric: nones}
@@ -653,9 +645,8 @@ class energyGain():
             name = f'{var}BinLowerBound'
             finalCols.append(name)
             finalColsMultiIdx.append((name,'',''))
-            
-        metricDF = pd.DatFrame(metricDict)
-        metricDF = metricDF[finalCols]
+        
+        metricDF = pd.DataFrame(metricDict)
         
         for boostrap in range(B):
             currentDF = boostrapDFs[boostrap]
@@ -666,105 +657,20 @@ class energyGain():
                                          windSpeedSpecs, useReference, df=binall)
             binStats = computeall[finalColsMultiIdx]
             # Multi-index on the columns makes indexing annoying when all but one level is empty
-            dfTemp = binStats.reset_index(drop=True).droplevels(levels=[1,2], axis="columns")
+            dfTemp = binStats.reset_index(drop=True).droplevel(level=[1,2], axis="columns")
             # Make sure columns are in the right order
             dfTemp = dfTemp[finalCols]
-            metricDF = pd.concat([metricDF, dfTemp],axis=0)
+            metricDF = pd.concat([metricDF, dfTemp], axis=0)
+            
+        
+        metricDF = metricDF[finalCols]
+        
+        duration = default_timer() - start
+        print(duration)
             
             
         # Compute Sampling distribution statistics for each wind condition bin
-            
-        if nDim==1:
-
-            if dim == "direction":
-                windBins = np.arange(windDirectionSector[0],
-                                     windDirectionSector[1], by)
-            else:
-                windBins = np.arange(windSpeedRange[0],
-                                     windSpeedRange[1], by)
-                
-        else: #nDim=2
-            windBins = np.array([(direction, speed) 
-                             for direction in range(windDirectionSpecs[0],
-                                                    windDirectionSpecs[1],
-                                                    windDirectionSpecs[2]) 
-                             for speed in range(windSpeedSpecs[0],
-                                                windSpeedSpecs[1],
-                                                windSpeedSpecs[2])])
-            #print("Computing as a function of" + dim)
-        
-        # Matrix to hold all botstrap samples (one row = one bootstrap rep)
-        bootstrapMatrix = np.full((B, windBins.shape[0]), None, dtype=float)        
-        
-        # Create temporary energyGain object
-        egTemp = energyGain(df=None,
-                            dfUpstream=self.dfUpstream, 
-                            testTurbines=self.testTurbines,
-                            refTurbines=self.referenceTurbines,
-                            wdCol=self.wdCol,
-                            wsCol=self.wsCol,
-                            useReference=self.useReference)
-        
-        for rep in range(B):
-            indices = bootstrapIdx[rep]
-            # Get the sample for this bootstrap rep   
-            dfTemp = self.df.iloc[indices]
-            
-            # reset the data frame indices
-            # I'm not entirely sure this matters, but just in case
-            dfTemp.reset_index(drop=True, inplace=True)
-            
-            # Update temporary energyGain object
-            egTemp.df=dfTemp
-            #breakpoint()
-            if nDim==1:
-                # compute the desired metric for every wind condition bin
-                computeResults = egTemp.compute1D(egTemp.percentPowerGain, # I don't think metric method will work here but come back and check
-                                                  windDirectionSector,
-                                                  windSpeedRange, by=by, dim=dim)["y"]
-            else:#(if nDim==2)
-            # Flatten the resulting matrix so that we have an array that goes 
-            # through all speeds and then changes directions
-                computeResults = egTemp.compute2D(egTemp.percentPowerGain,
-                                                windDirectionSpecs,
-                                                windSpeedSpecs)["data"].flatten("F")
-                #computeData = computeResults["data"].flatten("F")
-            
-            # Save the array as one row in the bootstrap matrix
-            bootstrapMatrix[rep] = computeResults
-         
-        # Compute sampling distribution statistics across each rep
-        # (across rows/by column) one column = all the reps for one bin
-        means = np.mean(bootstrapMatrix, axis=0)
-        se = np.std(bootstrapMatrix, axis=0)
-        meansPlusSE = means + seMultiplier*se
-        meansMinusSE = means - seMultiplier*se
-        medians = np.percentile(bootstrapMatrix, q=50, axis=0)
-        lowerPercentiles = np.percentile(bootstrapMatrix, q=lowerPercentile, axis=0)
-        upperPercentiles = np.percentile(bootstrapMatrix, q=upperPercentile, axis=0)
-        
-        # Add results to dictionary
-        resultDict["mean"]= means
-        resultDict["se"]= se
-        resultDict["meanPlusSE"]= meansPlusSE
-        resultDict["meanMinusSE"]= meansMinusSE
-        resultDict["median"]= medians
-        resultDict["lowerPercentile"]= lowerPercentiles
-        resultDict["upperPercentile"]= upperPercentiles
-        
-        if nDim==1:
-            resultDict["binLowerBound"] = windBins
-        else:#(if nDim==2)
-            resultDict["directionLowerBound"] = windBins[:,0]
-            resultDict["speedLowerBound"] = windBins[:,1]
-        
-        # Return the actual samples if desired
-        if retainReps:
-            return {"stats":pd.DataFrame(resultDict), 
-                    "reps":bootstrapMatrix}
-        duration = default_timer() - start
-        print(duration)
-        return pd.DataFrame(resultDict)
+        return metricDF
     
     # Change this name later, probably
     # I just realized the tick marks might behave weirdly if either stepsize is specified to be less than on, there was a smart tick mark picker that I could use instead
