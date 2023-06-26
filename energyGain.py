@@ -573,31 +573,35 @@ class energyGain():
         print(aep)
         return (df, aep)
     
-    def bootstrapSamples(self, B, grouping='time', stepVars = ["direction", "speed"], 
-                  windDirectionSpecs=[190,250,1], windSpeedSpecs=[0,20,1],
-                  useReference=True, df=None,seed=None):
+    def bootstrapSamples(self, B=1000, grouping='time', seed=None):
         
+        start = default_timer()
         prng = np.random.default_rng(seed)
         samples = np.ndarray(B, dtype=pd.core.frame.DataFrame)
         
+        
+        # Sampling rows from different data frames depending on the sampling scheme
         if grouping is None:
-            nreps = self.dfLong.shape[0]
-            bootstrapIdx = prng.choice(nreps, size=(B, nreps), replace=True)
-            df = self.dfLong.copy
+            nRows = self.dfLong.shape[0]
+
+            df = self.dfLong.copy()
         elif grouping=='time':
-            nreps = self.dfshape[0]
-            df = self.df.copy
-        elif grouping=='turbine':
-            # think more about this
-            None
+            nRows = self.df.shape[0]
+            df = self.df.copy()
             
+        bootstrapIdx = prng.choice(nRows, size=(B, nRows), replace=True)
+            
+        # Do the actual bootstrapping
         for rep in range(B):
             indices = bootstrapIdx[rep]
             # Get the sample for this bootstrap rep   
             dfTemp = df.iloc[indices]
             dfTemp.reset_index(drop=True, inplace=True)
             samples[rep] = dfTemp
-
+            
+        duration = default_timer() - start
+        print("Sampling Time:", duration)
+        
         return samples
     
 
@@ -647,13 +651,8 @@ class energyGain():
                       "upperPercentile": None,
                       "lowerPercentile": None}
         
-        # Set seed for reproducibility
-        prng = np.random.default_rng(seed)
+        boostrapDFs = self.bootstrapSamples(self, B, grouping='time', seed=None)
         
-        # Get all bootstrap samples indices at once
-        bootstrapIdx = prng.choice(Shape[0], size=(B, Shape[0]), replace=True)
-        
-        # Set up wind condition bins
         if nDim==1:
 
             if dim == "direction":
