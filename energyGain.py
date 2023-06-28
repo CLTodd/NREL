@@ -632,19 +632,17 @@ class energyGain():
         # Get an array of the bootstrap samples
         bootstrapDFs = self.bootstrapSamples(B=B, seed=seed)
         
-        
-        finalCols = list([metric])
-        finalColsMultiIdx = list([(metric, '','')])
-        
-        
-        for var in stepVars:
-            #metricDict[var] = nones
-            name = f'{var}BinLowerBound'
-            finalCols.append(name)
-            finalColsMultiIdx.append((name,'',''))
-        
         if metric=="aepGain":
             metricArray = np.full(shape=B, fill_value=None, dtype=float)
+        else:
+            finalCols = list([metric])
+            finalColsMultiIdx = list([(metric, '','')])
+            
+            for var in stepVars:
+                #metricDict[var] = nones
+                name = f'{var}BinLowerBound'
+                finalCols.append(name)
+                finalColsMultiIdx.append((name,'',''))
         
         for bootstrap in range(B):
             currentDF = bootstrapDFs[bootstrap]
@@ -686,6 +684,8 @@ class energyGain():
                       "median":  np.nanmedian(metricArray),
                       "upperPercentile": np.nanpercentile(metricArray, q=upperPercentile),
                       "lowerPercentile": np.nanpercentile(metricArray, q=lowerPercentile)}
+            duration = default_timer() - start
+            print("Overall:", duration)
             if retainReps:
                 return {'summary': resultDict, 'reps': bootstrapDFs}
             return resultDict
@@ -716,7 +716,7 @@ class energyGain():
                            'se', 'nObvs']]
         
         duration = default_timer() - start
-        print(duration)
+        print("Overall:", duration)
             
         if retainReps:
             return {"summary": dfStats, "reps":bootstrapDFs}
