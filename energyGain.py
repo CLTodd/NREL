@@ -30,7 +30,7 @@ class energyGain():
             turbines (True) or Test turbines to themselves in control mode
             versus baseline mode (False).
         """
-        #breakpoint()
+        
         self.df = df
         self.dfLong=None
         self.dfUpstream = dfUpstream
@@ -383,7 +383,7 @@ class energyGain():
         dfLong = df.melt(id_vars=colsToKeep, value_name="power", var_name="turbine")
         
         # Convert turbine numbers from strings to integers
-        dfLong["turbine"]  = [re.sub(pattern="pow_", repl="", string=i) for i in dfLong["turbine"]]
+        dfLong["turbine"]  = dfLong["turbine"].str.removeprefix("pow_")
         dfLong["turbine"] = dfLong["turbine"].to_numpy(dtype=int)
         
         # Add turbine label column
@@ -409,7 +409,7 @@ class energyGain():
         # Pivot wider     
         if returnWide:
             optionalCols = list( set(colsToKeep) - set(stepVarCols))
-            #breakpoint()
+            
             dfWide = dfGrouped.pivot(columns=optionalCols, index=stepVarCols, 
                                      values=['averagePower', 'numObvs'])
             return dfWide
@@ -421,7 +421,7 @@ class energyGain():
     # Fix comments later
     def computeAll(self, stepVars = ["direction", "speed"], 
                    windDirectionSpecs=[190,250,1], windSpeedSpecs=[0,20,1],
-                   useReference=True, df=None, multiIdxAsCol=False):
+                   useReference=True, df=None):
         """
         Computes all the things from the slides except AEP gain
 
@@ -449,31 +449,33 @@ class energyGain():
                              windDirectionSpecs=windDirectionSpecs,
                              windSpeedSpecs=windSpeedSpecs,
                              df=df)
-        #breakpoint()
+        # Sometimes the order of the labels in this tuple seem to change and I haven't figured out why. This should fix the order.
+        df = df.reorder_levels([None, "turbineLabel", "control_mode"], axis=1)
+                          
         if useReference:
-            df["powerRatioBaseline"] = np.divide(df[('averagePower', 'baseline', 'test')], 
-                                             df[('averagePower', 'baseline', 'reference')])
-            df["powerRatioControl"] = np.divide(df[('averagePower', 'controlled', 'test')],
-                                            df[('averagePower', 'controlled', 'reference')])
-            df["totalNumObvs"] = np.nansum(np.dstack((df[('numObvs', 'controlled', 'test')],
-                                                      df[('numObvs', 'controlled', 'reference')],
-                                                      df[('numObvs', 'baseline', 'test')],
-                                                      df[('numObvs', 'baseline', 'reference')])),
+            df["powerRatioBaseline"] = np.divide(df[('averagePower','test','baseline')], 
+                                             df[('averagePower', 'reference', 'baseline')])
+            df["powerRatioControl"] = np.divide(df[('averagePower', 'test', 'controlled')],
+                                            df[('averagePower', 'reference', 'controlled')])
+            df["totalNumObvs"] = np.nansum(np.dstack((df[('numObvs', 'test', 'controlled')],
+                                                      df[('numObvs', 'reference', 'controlled')],
+                                                      df[('numObvs', 'test', 'baseline')],
+                                                      df[('numObvs', 'reference', 'baseline')])),
                                            axis=2)[0]
             
             
         else:
-            df["powerRatioBaseline"] = df[('averagePower', 'baseline', 'test')]
-            df["powerRatioControl"] = df[('averagePower', 'controlled', 'test')]
+            df["powerRatioBaseline"] = df[('averagePower', 'test', 'baseline')]
+            df["powerRatioControl"] = df[('averagePower', 'test', 'controlled')]
             
             
-            df["totalNumObvs"] = np.nansum(np.dstack((df[('numObvs', 'controlled', 'test')],
-                                                      df[('numObvs', 'baseline', 'test')])),
+            df["totalNumObvs"] = np.nansum(np.dstack((df[('numObvs', 'test', 'controlled')],
+                                                      df[('numObvs', 'test', 'baseline')])),
                                            axis=2)[0]
             
             df["totalNumObvsInclRef"] = np.nansum(np.dstack((df["totalNumObvs"],
-                                                             df[('numObvs', 'controlled', 'reference')],
-                                                             df[('numObvs', 'baseline', 'reference')])),
+                                                             df[('numObvs', 'reference', 'controlled')],
+                                                             df[('numObvs', 'reference', 'baseline')])),
                                            axis=2)[0]
         
         # Same for both AEP methods
@@ -579,23 +581,26 @@ class energyGain():
         print(aep)
         return (df, aep)
     
-    def bootstrapSamples(self, B=1000, grouping='time', seed=None):
+    def bootstrapSamples(self, B=1000, seed=None):
         
         start = default_timer()
         samples = np.ndarray(B, dtype=pd.core.frame.DataFrame)
         
         
         # Sampling rows from different data frames depending on the sampling scheme
-        if grouping is None:
-            df = self.dfLong.copy()
-        elif grouping=='time':
-            df = self.df.copy()
-            
-
+        #df = self.dfLong.copy()
+        #nrow = self.df.shape[0]
         # Do the actual bootstrapping
+        nrow = self.df.shape[0]
         for rep in range(B):
-            samples[rep] = df.sample(frac=1,replace=True,random_state=seed).reset_index(drop=True, inplace=True)
+            dfTemp = self.df.sample(n=nrow,
+                                    replace=True,
+                                    random_state=seed)
             
+            dfTemp.reset_index(drop=True,inplace=True)
+            samples[rep] = dfTemp
+                                                                   
+        
         duration = default_timer() - start
         print("Sampling Time:", duration)
         
@@ -603,9 +608,9 @@ class energyGain():
     
   
     # Need to completely rewrite this so that it works with computeAll
-    def bootstrapEstimate(self, stepVars, windDirectionSpecs, windSpeedSpecs,
-                          B=1000, seed=None, metric="percentPowerGain",
-                          grouping='time', useReference=True,
+    def bootstrapEstimate(self, stepVars=["direction","speed"], 
+                          windDirectionSpecs=[200,250,1], windSpeedSpecs=[0,20,1],
+                          B=1000, seed=None, metric="percentPowerGain", useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
                           retainReps = False):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
@@ -623,54 +628,76 @@ class energyGain():
         if type(stepVars) is str:    
             stepVars = list([stepVars])
             
-        # Assuming valid inputs
         start = default_timer()
-        #Shape = self.df.shape
-        resultDict = {"mean": None,
-                      "meanMinusSE": None,
-                      "meanPlusSE": None,
-                      "median": None,
-                      "upperPercentile": None,
-                      "lowerPercentile": None}
         
-        boostrapDFs = self.bootstrapSamples(B, grouping, seed)
-        
-        nones = np.full(shape=B, fill_value=None, dtype=float)
-        metricDict = {metric: nones}
+        # Get an array of the bootstrap samples
+        bootstrapDFs = self.bootstrapSamples(B=B, seed=seed)
         finalCols = list([metric])
         finalColsMultiIdx = list([(metric, '','')])
         
+        
         for var in stepVars:
-            metricDict[var] = nones
+            #metricDict[var] = nones
             name = f'{var}BinLowerBound'
             finalCols.append(name)
             finalColsMultiIdx.append((name,'',''))
         
-        metricDF = pd.DataFrame(metricDict)
         
-        for boostrap in range(B):
-            currentDF = boostrapDFs[boostrap]
+        
+        for bootstrap in range(B):
+            currentDF = bootstrapDFs[bootstrap]
             # get into correct format
             binadder =self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs, df=currentDF)
             binall = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, df=binadder)
+            
             computeall = self.computeAll(stepVars, windDirectionSpecs,
                                          windSpeedSpecs, useReference, df=binall)
+            
+            
             binStats = computeall[finalColsMultiIdx]
             # Multi-index on the columns makes indexing annoying when all but one level is empty
             dfTemp = binStats.reset_index(drop=True).droplevel(level=[1,2], axis="columns")
             # Make sure columns are in the right order
             dfTemp = dfTemp[finalCols]
-            metricDF = pd.concat([metricDF, dfTemp], axis=0)
             
+            if bootstrap==0:
+                metricMatrix = np.asarray(dfTemp)
+            
+            metricMatrix = np.concatenate((metricMatrix, np.asarray(dfTemp)), axis=0)
+            
+        metricDF = pd.DataFrame(data=metricMatrix, columns=finalCols)
+
+        # Compute Sampling distribution statistics for each wind condition bin
+        finalCols.pop(0)
+        dfStats = metricDF.groupby(by=finalCols).agg(mean=pd.NamedAgg(column=metric,
+                                                                      aggfunc=np.mean),
+                                                     se=pd.NamedAgg(column=metric,
+                                                                    aggfunc=np.nanstd),
+                                                     median=pd.NamedAgg(column=metric,
+                                                                        aggfunc=np.nanmedian),
+                                                     upperPercentile=pd.NamedAgg(column=metric,
+                                                                                 aggfunc=lambda x: np.nanpercentile(x,upperPercentile)),
+                                                     lowerPercentile=pd.NamedAgg(column=metric,
+                                                                                 aggfunc=lambda x: np.nanpercentile(x, lowerPercentile)),
+                                                     nObvs = pd.NamedAgg(column=metric, 
+                                                                           aggfunc='count'))
         
-        metricDF = metricDF[finalCols]
+        seMultd = seMultiplier*dfStats["se"]
+        dfStats["meanMinusSe"] = np.subtract(dfStats["mean"], seMultd)
+        dfStats["meanPlusSe"] = np.add(dfStats["mean"], seMultd)
+        
+        dfStats = dfStats[["mean",'meanMinusSe','meanPlusSe', 
+                           'median', 'upperPercentile', 'lowerPercentile',
+                           'se', 'nObvs']]
         
         duration = default_timer() - start
         print(duration)
             
+        if retainReps:
+            return {"summary": dfStats, "reps":bootstrapDFs}
             
-        # Compute Sampling distribution statistics for each wind condition bin
-        return metricDF
+        
+        return dfStats
     
     # Change this name later, probably
     # I just realized the tick marks might behave weirdly if either stepsize is specified to be less than on, there was a smart tick mark picker that I could use instead
