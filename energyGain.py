@@ -18,7 +18,9 @@ from flasc.dataframe_operations import dataframe_manipulations as dfm
 class energyGain():
     
     def __init__(self, df, dfUpstream, testTurbines=[], refTurbines=[],
-                 wdCol=None, wsCol=None, useReference=True):
+                 wdCol=None, wsCol=None, 
+                 defaultWindDirectionSpecs = [0,360,1],
+                 defaultWindSpeedSpecs=[0,20,1], useReference=True):
         """
         testTurbines: list, turbine numbers to be considered test turbines
         refTurbines: list, turbine numbers to be considered reference turbines
@@ -40,13 +42,17 @@ class energyGain():
         self.wsCol = wsCol
         self.useReference = useReference
         
+        # Set defaults
+        self.defaultWindDirectionSpecs = defaultWindDirectionSpecs
+        self.defaultWindSpeedSpecs = defaultWindSpeedSpecs
+        
         # Set the columns to be referenced for wind speed and direction if not given   
         if self.wdCol == None:
             self.setWD() 
         if self.wsCol==None:
             self.setWS()
         
-        # quick fix for now
+        # I don't rember why I did this
         if df is not None:
             self.__dfLonger__()
             self.allTurbines = [int(re.sub("\D+","",colname)) for colname in list(df) if re.match('^pow_\d+', colname)]
@@ -105,8 +111,10 @@ class energyGain():
         self.testTurbines = lst
         self.__dfLonger__()
     
-    def averagePower(self, windDirectionBin,windSpeedBin, 
-                     turbineList, controlMode, verbose=False):
+    def averagePower(self, windDirectionBin = None,
+                     windSpeedBin = None, 
+                     turbineList=None, controlMode="controlled",
+                     verbose=False):
         """
         Average Power for a specific wind direction bin and wind speed bin.
         
@@ -120,12 +128,18 @@ class energyGain():
         """
         
         # Set wind direction if necessary
-        if self.wdCol==None:
+        if self.wdCol is None:
             self.setWD()
             
         # Set wind speed if necessary
-        if self.wsCol==None:
+        if self.wsCol is None:
             self.setWS()
+            
+        if windDirectionBin is None:
+            windDirectionBin = self.defaultWindDirectionSpecs[0:2]
+            
+        if windSpeedBin is None:
+            windSpeedBin = self.defaultWindSpeedSpecs[0:2]
         
         # Select relevant rows
         dfTemp = self.df[ (self.df[self.wdCol]>= windDirectionBin[0]) &
@@ -155,7 +169,7 @@ class energyGain():
      
         return avg
     
-    def powerRatio(self, windDirectionBin, windSpeedBin, controlMode=None, 
+    def powerRatio(self, windDirectionBin=None, windSpeedBin=None, controlMode=None, 
                    useReference = True, verbose = False):
         """
         Power ratio for a specific wind direction bin and wind speed bin. 
@@ -180,12 +194,18 @@ class energyGain():
             useReference = self.useReference
         
         # Set wind speed if necessary
-        if self.wsCol==None:
+        if self.wsCol is None:
             self.setWS()
         
         # Set wind direction if necessary
-        if self.wdCol==None:
+        if self.wdCol is None:
             self.setWD()
+            
+        if windDirectionBin is None:
+            windDirectionBin = self.defaultWindDirectionSpecs[0:2]
+            
+        if windSpeedBin is None:
+            windSpeedBin = self.defaultWindSpeedSpecs[0:2]
         
         # Calculate Ratio
         numerator = self.averagePower(windDirectionBin, windSpeedBin,
@@ -216,7 +236,7 @@ class energyGain():
 
         return numerator/denominator
 
-    def changeInPowerRatio(self, windDirectionBin, windSpeedBin, useReference=None, verbose=False):
+    def changeInPowerRatio(self, windDirectionBin=None, windSpeedBin=None, useReference=None, verbose=False):
         """
         Change in Power Ratio for a specific wind direction bin and wind speed bin.
         
@@ -227,12 +247,18 @@ class energyGain():
             useReference = self.useReference
             
         # Set wind speed if necessary
-        if self.wsCol ==None:
+        if self.wsCol is None:
             self.setWS()
         
         # Set wind direction if necessary
-        if self.wdCol ==None:
+        if self.wdCol is None:
             self.setWD()
+            
+        if windDirectionBin is None:
+            windDirectionBin = self.defaultWindDirectionSpecs[0:2]
+            
+        if windSpeedBin is None:
+            windSpeedBin = self.defaultWindSpeedSpecs[0:2]
 
         if useReference:
             # Typical power ratio formula if we are using reference turbines
@@ -263,7 +289,7 @@ class energyGain():
         
         return control - baseline
         
-    def percentPowerGain(self, windDirectionBin, windSpeedBin, useReference=None, verbose=False):
+    def percentPowerGain(self, windDirectionBin=None, windSpeedBin=None, useReference=None, verbose=False):
         
         """
         Percent Power Gain for a specific wind direction bin and wind speed bin.
@@ -282,12 +308,18 @@ class energyGain():
             useReference = self.useReference
         
         # Set wind speed if necessary
-        if self.wsCol==None:
+        if self.wsCol is None:
             self.setWS()
         
         # Set wind direction if necessary
-        if self.wdCol==None:
+        if self.wdCol is None:
             self.setWD()
+        
+        if windDirectionBin is None:
+            windDirectionBin = self.defaultWindDirectionSpecs[0:2]
+            
+        if windSpeedBin is None:
+            windSpeedBin = self.defaultWindSpeedSpecs[0:2]
             
         # If useReference==False, this simplifies to average power
         control = self.powerRatio(windDirectionBin, windSpeedBin, "controlled", useReference)
@@ -309,7 +341,8 @@ class energyGain():
         
         return (control - baseline)/baseline
     
-    def binAdder(self, stepVars = "direction", windDirectionSpecs=[190,250,1],windSpeedSpecs=[0,20,1], copy=True, df=None):
+    def binAdder(self, stepVars = "direction", windDirectionSpecs=None,
+                 windSpeedSpecs=None, copy=True, df=None):
         """
         Add columns for the lower bounds of the wind condition bins to df (or a copy of df)
         
@@ -324,6 +357,12 @@ class energyGain():
         copy: boolean, whether to simply return a copy of self.df (True) or to actually update self.df (False)
             Default is true because rows outside of the specs will be deleted
         """
+        if windDirectionSpecs is None:
+            windDirectionSpecs = self.defaultWindDirectionSpecs
+            
+        if windSpeedSpecs is None:
+            windSpeedSpecs = self.defaultWindSpeedSpecs
+            
         # Convert to list if needed
         if type(stepVars) is str:
             stepVars = list([stepVars])
@@ -348,8 +387,8 @@ class energyGain():
         # Return the copy with the bin columns
         return df
              
-    def binAll(self, stepVars = ["direction", "speed"], windDirectionSpecs=[190,250,1],
-               windSpeedSpecs=[0,20,1], retainControlMode=True, 
+    def binAll(self, stepVars = ["direction", "speed"], windDirectionSpecs=None,
+               windSpeedSpecs=None, retainControlMode=True, 
                retainTurbineLabel=True,  returnWide=True, df=None, group=True):
         """
         windDirectionSpecs: list of length 3 or 2, specifications for wind direction
@@ -362,6 +401,12 @@ class energyGain():
             The variable(s) you want to increment by for the wind condition bins
         retainControlMode: boolean, whether to keep the control mode column (True) or not (False)
         """
+        if windDirectionSpecs is None:
+            windDirectionSpecs = self.defaultWindDirectionSpecs
+            
+        if windSpeedSpecs is None:
+            windSpeedSpecs = self.defaultWindSpeedSpecs
+        
         if type(stepVars) is str:    
             stepVars = list([stepVars])
         
@@ -420,7 +465,7 @@ class energyGain():
         
     # Fix comments later
     def computeAll(self, stepVars = ["direction", "speed"], 
-                   windDirectionSpecs=[190,250,1], windSpeedSpecs=[0,20,1],
+                   windDirectionSpecs=None, windSpeedSpecs=None,
                    useReference=True, df=None):
         """
         Computes all the things from the slides except AEP gain
@@ -441,6 +486,12 @@ class energyGain():
         df : pandas data frame
             Nicely formatted dataframe that can go directly into aepGain.
         """
+        if windDirectionSpecs is None:
+            windDirectionSpecs = self.defaultWindDirectionSpecs
+            
+        if windSpeedSpecs is None:
+            windSpeedSpecs = self.defaultWindSpeedSpecs
+            
         if type(stepVars) is str:    
             stepVars = list([stepVars])
             
@@ -495,7 +546,7 @@ class energyGain():
         return df
     
     # Fix comments later
-    def aepGain(self, windDirectionSpecs=[190,250,1],windSpeedSpecs=[0,20,1],
+    def aepGain(self, windDirectionSpecs=None,windSpeedSpecs=None,
                 hours=8760, aepMethod=1, absolute=False, useReference=None,df=None):
         """
         Calculates AEP gain  
@@ -520,6 +571,12 @@ class energyGain():
         AEP gain (float)
 
         """
+        if windDirectionSpecs is None:
+            windDirectionSpecs = self.defaultWindDirectionSpecs
+            
+        if windSpeedSpecs is None:
+            windSpeedSpecs = self.defaultWindSpeedSpecs
+            
         if useReference is None:
             useReference = self.useReference
         
@@ -605,7 +662,7 @@ class energyGain():
   
     # Need to completely rewrite this so that it works with computeAll
     def bootstrapEstimate(self, stepVars=["direction","speed"], 
-                          windDirectionSpecs=[200,250,1], windSpeedSpecs=[0,20,1],
+                          windDirectionSpecs=None, windSpeedSpecs=None,
                           B=1000, seed=None, metric="percentPowerGain", useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
                           retainReps = False, **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
@@ -622,7 +679,11 @@ class energyGain():
             Only used if nDim=2
         **AEPargs: args for the AEP method
         """
-        
+        if windDirectionSpecs is None:
+            windDirectionSpecs = self.defaultWindDirectionSpecs
+            
+        if windSpeedSpecs is None:
+            windSpeedSpecs = self.defaultWindSpeedSpecs
             
         start = default_timer()
         
@@ -724,6 +785,11 @@ class energyGain():
         
         return dfStats
     
+    
+    
+    
+    
+    # Revisit these plotting functions, a lot has been changed since I last used them
     # Change this name later, probably
     # I just realized the tick marks might behave weirdly if either stepsize is specified to be less than on, there was a smart tick mark picker that I could use instead
     def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], 
@@ -770,8 +836,7 @@ class energyGain():
         plt.show()
         
         return heatmapMatrix
-        
-    # change this name later
+    
     
     
     # Change this name later
