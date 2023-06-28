@@ -538,7 +538,7 @@ class energyGain():
         # Different AEP formulas
         if aepMethod==1:
             if useReference:
-                df["aepGainContribution"] = np.multiply(np.multiply(df[('averagePower', 'baseline', 'test')],
+                df["aepGainContribution"] = np.multiply(np.multiply(df[('averagePower', 'test', 'baseline')],
                                                                 df[('percentPowerGain', '', '')]),
                                                     df[('freq', '', '')])
             else:
@@ -546,18 +546,18 @@ class energyGain():
     
             
             if not absolute:
-                denomTerms = np.multiply(df[('averagePower', 'baseline', 'test')], df[('freq', '', '')])
+                denomTerms = np.multiply(df[('averagePower', 'test', 'baseline')], df[('freq', '', '')])
             
         else:
             # Couldn't find an element-wise weighted mean, so I did this
-            sumPowerRefBase = np.multiply(df[('averagePower', 'baseline', 'reference')],
-                                          df[('numObvs', 'baseline', 'reference')])
-            sumPowerRefcontrolled = np.multiply(df[('averagePower', 'controlled', 'reference')],
-                                          df[('numObvs', 'controlled', 'reference')])
+            sumPowerRefBase = np.multiply(df[('averagePower', 'reference', 'baseline')],
+                                          df[('numObvs', 'reference', 'baseline')])
+            sumPowerRefcontrolled = np.multiply(df[('averagePower', 'reference', 'controlled')],
+                                          df[('numObvs', 'reference', 'controlled')])
             
             sumPowerRef = np.nansum(np.dstack((sumPowerRefBase,sumPowerRefcontrolled)),2)[0]
             
-            numObvsRef = np.nansum(np.dstack((df[('numObvs', 'controlled', 'reference')],df[('numObvs', 'baseline', 'reference')])),2)[0]
+            numObvsRef = np.nansum(np.dstack((df[('numObvs', 'reference', 'controlled')],df[('numObvs', 'reference', 'baseline')])),2)[0]
             
             avgPowerRef = np.divide(sumPowerRef, numObvsRef)
             
@@ -586,11 +586,7 @@ class energyGain():
         start = default_timer()
         samples = np.ndarray(B, dtype=pd.core.frame.DataFrame)
         
-        
-        # Sampling rows from different data frames depending on the sampling scheme
-        #df = self.dfLong.copy()
-        #nrow = self.df.shape[0]
-        # Do the actual bootstrapping
+    
         nrow = self.df.shape[0]
         for rep in range(B):
             dfTemp = self.df.sample(n=nrow,
@@ -612,7 +608,7 @@ class energyGain():
                           windDirectionSpecs=[200,250,1], windSpeedSpecs=[0,20,1],
                           B=1000, seed=None, metric="percentPowerGain", useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
-                          retainReps = False):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
+                          retainReps = False, **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
         
@@ -624,14 +620,19 @@ class energyGain():
         windSpeedSpecs: list of length 3, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
             Only used if nDim=2
+        **AEPargs: args for the AEP method
         """
-        if type(stepVars) is str:    
-            stepVars = list([stepVars])
+        
             
         start = default_timer()
         
+        if type(stepVars) is str:    
+            stepVars = list([stepVars])
+        
         # Get an array of the bootstrap samples
         bootstrapDFs = self.bootstrapSamples(B=B, seed=seed)
+        
+        
         finalCols = list([metric])
         finalColsMultiIdx = list([(metric, '','')])
         
@@ -642,7 +643,8 @@ class energyGain():
             finalCols.append(name)
             finalColsMultiIdx.append((name,'',''))
         
-        
+        if metric=="aepGain":
+            metricArray = np.full(shape=B, fill_value=None, dtype=float)
         
         for bootstrap in range(B):
             currentDF = bootstrapDFs[bootstrap]
@@ -653,6 +655,14 @@ class energyGain():
             computeall = self.computeAll(stepVars, windDirectionSpecs,
                                          windSpeedSpecs, useReference, df=binall)
             
+            if metric == "aepGain":
+                aep = self.aepGain(windDirectionSpecs=windDirectionSpecs,
+                                   windSpeedSpecs=windSpeedSpecs,
+                                   df=computeall, **AEPargs)
+                metricArray[bootstrap] = aep[1]
+                continue
+                
+                
             
             binStats = computeall[finalColsMultiIdx]
             # Multi-index on the columns makes indexing annoying when all but one level is empty
@@ -665,6 +675,21 @@ class energyGain():
             
             metricMatrix = np.concatenate((metricMatrix, np.asarray(dfTemp)), axis=0)
             
+        if metric=="aepGain":
+            avg = np.nanmean(metricArray)
+            se =  np.nanstd(metricArray)
+            meanMinusSE = avg - seMultiplier*se
+            meanPlusSE = avg + seMultiplier*se
+            resultDict = {"mean": avg,
+                      "meanMinusSE": meanMinusSE,
+                      "meanPlusSE": meanPlusSE,
+                      "median":  np.nanmedian(metricArray),
+                      "upperPercentile": np.nanpercentile(metricArray, q=upperPercentile),
+                      "lowerPercentile": np.nanpercentile(metricArray, q=lowerPercentile)}
+            if retainReps:
+                return {'summary': resultDict, 'reps': bootstrapDFs}
+            return resultDict
+       
         metricDF = pd.DataFrame(data=metricMatrix, columns=finalCols)
 
         # Compute Sampling distribution statistics for each wind condition bin
