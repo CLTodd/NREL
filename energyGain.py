@@ -7,12 +7,18 @@ Created on Fri Jun  9 13:03:40 2023
 
 #import pdb
 import matplotlib.pyplot as plt
+import matplotlib.colors as mplc
 import matplotlib.ticker as mticker
+from mpl_toolkits.axes_grid1 import AxesGrid
 import numpy as np
+import cmasher as cmr 
 from timeit import default_timer
 import re
 from flasc.dataframe_operations import dataframe_manipulations as dfm
 import pandas as pd
+
+
+
 class energyGain():
     
     
@@ -675,7 +681,8 @@ class energyGain():
                           windDirectionSpecs=None, windSpeedSpecs=None,
                           B=1000, seed=None, metric="percentPowerGain", useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
-                          retainReps = False, diagnose=True, **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
+                          retainReps = False, diagnose=True,
+                          colors=['turbo','cmr.bubblegum_r','cmr.wildfire'], **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
         
@@ -756,7 +763,8 @@ class energyGain():
                       "median":  np.nanmedian(metricArray),
                       "upperPercentile": np.nanpercentile(metricArray, q=upperPercentile),
                       "lowerPercentile": np.nanpercentile(metricArray, q=lowerPercentile),
-                      "se": se}
+                      "se": se,
+                      "iqr": np.nanpercentile(metricArray, q=75)- np.nanpercentile(metricArray, q=25)}
             duration = default_timer() - start
             print("Overall:", duration)
             if retainReps:
@@ -778,21 +786,26 @@ class energyGain():
                                                      lowerPercentile=pd.NamedAgg(column=metric,
                                                                                  aggfunc=lambda x: np.nanpercentile(x, lowerPercentile)),
                                                      nObvs = pd.NamedAgg(column=metric, 
-                                                                           aggfunc='count'))
+                                                                           aggfunc='count'),
+                                                     firstQuartile = pd.NamedAgg(column=metric,
+                                                                                 aggfunc=lambda x: np.nanpercentile(x,25)),
+                                                     thirdQuartile= pd.NamedAgg(column=metric,
+                                                                                 aggfunc=lambda x: np.nanpercentile(x,75)))
         
         seMultd = seMultiplier*dfStats["se"]
         dfStats["meanMinusSe"] = np.subtract(dfStats["mean"], seMultd)
         dfStats["meanPlusSe"] = np.add(dfStats["mean"], seMultd)
+        dfStats["iqr"] = np.subtract(dfStats['thirdQuartile'], dfStats['firstQuartile'])
         
         dfStats = dfStats[["mean",'meanMinusSe','meanPlusSe', 
                            'median', 'upperPercentile', 'lowerPercentile',
-                           'se', 'nObvs']]
+                           'se', 'iqr','nObvs']]
         
         #breakpoint()
         if diagnose:
             dfBinned = self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs)
             dfGrouped = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, False, False, df=dfBinned)
-            self.bootstrapDiagnostics(dfBinned, dfGrouped, bootstrapDFbinned, stepVars)
+            self.bootstrapDiagnostics(dfBinned, dfStats, bootstrapDFbinned, stepVars, colors)
         
         duration = default_timer() - start
         print("Overall:", duration)
@@ -804,89 +817,135 @@ class energyGain():
         return dfStats
     
     
-    def bootstrapDiagnostics(self, dfBinned, dfGrouped, bootstrapDFBinnedList, stepVars):
+    def bootstrapDiagnostics(self, dfBinned, dfStats,
+                             bootstrapDFBinnedList, stepVars, colors=['turbo', 'cmr.bubblegum_r','cmr.wildfire']):
         # look at the distribution of the samples
         # assuming 2d for now
         
+        # 2d Histogram
         
-        X = np.ndarray(0)
-        Y = np.ndarray(0)
-        
-        
+        ## Getting the data
+        X1 = np.ndarray(0)
+        Y1 = np.ndarray(0)
+        directionEdges = np.unique(np.asarray(dfBinned["directionBinLowerBound"]))
+        speedEdges = np.unique(np.asarray(dfBinned["speedBinLowerBound"]))
+        ### Just in case indices are out of order
+        dfStats.index = dfStats.index.reorder_levels(order=['directionBinLowerBound','speedBinLowerBound'])
+        ### Pool the bootstrap samples
         for df in bootstrapDFBinnedList:
             tempX = np.asarray(df["directionBinLowerBound"])
-            X = np.concatenate((X,tempX))
+            X1 = np.concatenate((X1,tempX))
             tempY = np.asarray(df["speedBinLowerBound"])
-            Y = np.concatenate((Y,tempY))
-            
-        speedEdges = np.unique(np.asarray(dfBinned["speedBinLowerBound"]))
-        directionEdges = np.unique(np.asarray(dfBinned["directionBinLowerBound"]))
+            Y1 = np.concatenate((Y1,tempY))
         
+        ### Real data samples
+        X2 = dfBinned['directionBinLowerBound']
+        Y2 = dfBinned['speedBinLowerBound']
+        
+        ## Plotting
         plt.style.use('_mpl-gallery-nogrid')
-        
-        # Densities
+               
         fig, axs = plt.subplots(nrows=1, ncols=2, 
                                 sharex=True, sharey=True, 
                                 figsize=(7,5), layout='constrained')
-        
-        h0 = axs[0].hist2d(x=X, y=Y, bins=[directionEdges, speedEdges], 
-                            cmap='plasma', density=True)
-        h1 = axs[1].hist2d(x=dfBinned['directionBinLowerBound'], 
-                      y=dfBinned['speedBinLowerBound'], 
+        ### Histograms
+        h0 = axs[0].hist2d(x=X1, y=Y1, 
+                           bins=[directionEdges, speedEdges],
+                           cmap='plasma', density=True)
+        h1 = axs[1].hist2d(x=X2, y=Y2, 
                       bins=[directionEdges, speedEdges], 
                       cmap='plasma',
                       density=True)
         
-        legend = fig.colorbar(h1[3], ax=[axs[0],axs[1]])
+        colorbar = fig.colorbar(h1[3], ax=[axs[0],axs[1]])
         
-        ## Tick marks at multiples of 5 and 1
+        ### Tick marks at multiples of 5 and 1
         for ax in axs:
             ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
             ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
             ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
             ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
+
         
-        ## Labels
+        ### Labels
         axs[0].set_title("Real Data")
         axs[1].set_title("Pooled Bootstrap Samples")
         fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
         fig.supylabel("Wind Speed (m/s)")
         fig.suptitle("Densities", fontsize=17)
-        legend
         plt.show()
         
-        # Standard errors:
-        figSE, axsSE = plt.subplots(nrows=1, ncols=2, 
-                                sharex=True, sharey=True, 
-                                figsize=(7,5), layout='constrained')
+        # Heatmaps
         
-        ax0 = axs[0].hist2d(x=X, y=Y, bins=[directionEdges, speedEdges], 
-                            cmap='plasma', density=True)
-        ax1 = axs[1].hist2d(x=dfBinned['directionBinLowerBound'], 
-                      y=dfBinned['speedBinLowerBound'], 
-                      bins=[directionEdges, speedEdges], 
-                      cmap='plasma',
-                      density=True)
+        ## Getting the data
+        mVarSE,mVarIQR,mIWperc,mIWci,mCenterMean,mCenterMed = [np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float) for i in range(6)]
+        ## 3 types of plots: variance, CI width, and Centers
+        pArray = np.asarray([["Variance", "SE", "IQR"],
+                             ["Confidence Interval Widths", "SE Method", "Percentile Method"],
+                             ["Centers", "Mean","Median"]])
         
-        legend = fig.colorbar(ax1[3], ax=[axs[0],axs[1]])
+        for speedIdx in range(speedEdges.size):
+            for directIdx in range(directionEdges.size):
+                try:
+                    mVarSE[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['se']
+                    mVarIQR[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['iqr']
+                    mIWperc[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],
+                                                               speedEdges[speedIdx])]['upperPercentile'] - dfStats.loc[(directionEdges[directIdx],
+                                                                                                          speedEdges[speedIdx])]['lowerPercentile']
+                    mIWci[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],
+                                                               speedEdges[speedIdx])]['meanPlusSe'] - dfStats.loc[(directionEdges[directIdx],
+                                                                                                          speedEdges[speedIdx])]['meanMinusSe']
+                    mCenterMean[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['mean']
+                    mCenterMed[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['median']
+                except KeyError:
+                    continue
         
-        # Tick marks at multiples of 5 and 1
-        for ax in axs:
-            ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
-            ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
-            ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
-            ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
+        mArray = np.asarray([[mVarSE, mVarIQR], 
+                             [mIWperc, mIWci],
+                             [mCenterMean, mCenterMed]])
+        ## Plotting
+        extent = [np.min(directionEdges), np.max(directionEdges),
+                  np.min(speedEdges), np.max(speedEdges)]
+                
+        ### Need to shift the diverging colormap to be centerd at 0
         
-        # Labels
-        axs[0].set_title("Real Data")
-        axs[1].set_title("Pooled Bootstrap Samples")
-        fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
-        fig.supylabel("Wind Speed (m/s)")
-        fig.suptitle("Densities", fontsize=17)
-        legend
-        plt.show()
-        
-        
+        ### Set up the plotting field
+        for plot in range(pArray.shape[0]):
+            plt.clf()
+            fig = plt.figure(figsize=(7,5), layout='constrained')
+            grid = AxesGrid(fig, rect=111,
+                nrows_ncols=(1, 2),
+                axes_pad=0.1,
+                cbar_mode='single',
+                cbar_location='right',
+                cbar_pad=0.1, share_all=True)
+            
+            ### Set up the individual heatmaps
+            for i in range(2):
+                ### Get data
+                M = mArray[plot][i]
+                # Boxes are NOT aligned
+                grid[i].xaxis.set_major_locator(mticker.MultipleLocator(5))
+                grid[i].yaxis.set_major_locator(mticker.MultipleLocator(5))
+                grid[i].xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
+                grid[i].yaxis.set_minor_locator(mticker.MultipleLocator(1))
+                grid[i].tick_params(which='major', length=5)
+                grid[i].tick_params(which='minor', length=4)
+                hm=grid[i].imshow(X=M, cmap=colors[plot], interpolation=None, 
+                                  origin='lower', extent=extent)
+            
+            cbar = grid[1].cax.colorbar(hm)
+            cbar = grid.cbar_axes[1].colorbar(hm)
+            grid.axes_all[0].set_title(pArray[plot][1], fontsize=15)
+            grid.axes_all[1].set_title(pArray[plot][2], fontsize=15)
+            
+            ### Labels
+            fig.suptitle(pArray[plot][0], fontsize=17)
+            fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})", fontsize=15) #unicode formatted
+            grid[0].set_ylabel("Wind Speed (m/s)", fontsize=15) # supylayout does not work here
+            
+            plt.show()
+
         return None
     
     
@@ -927,6 +986,7 @@ class energyGain():
         ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
         ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
         ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
+        
         
         # Labels
         ax.set_title(title)
