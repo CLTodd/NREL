@@ -9,13 +9,12 @@ Created on Fri Jun  9 13:03:40 2023
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
-import pandas as pd
 from timeit import default_timer
 import re
 from flasc.dataframe_operations import dataframe_manipulations as dfm
- 
-
+import pandas as pd
 class energyGain():
+    
     
     def __init__(self, df, dfUpstream, testTurbines=[], refTurbines=[],
                  wdCol=None, wsCol=None, 
@@ -142,7 +141,7 @@ class energyGain():
             windSpeedBin = self.defaultWindSpeedSpecs[0:2]
         
         # Select relevant rows
-        dfTemp = self.df[ (self.df[self.wdCol]>= windDirectionBin[0]) &
+        dfTemp = self.df.loc[ (self.df[self.wdCol]>= windDirectionBin[0]) &
                           (self.df[self.wdCol]< windDirectionBin[1]) &
                           (self.df[self.wsCol]>= windSpeedBin[0]) &
                           (self.df[self.wsCol]< windSpeedBin[1])
@@ -150,7 +149,7 @@ class energyGain():
         
         # Filter for control mode if necessary
         if controlMode != "both":
-            dfTemp = dfTemp[(dfTemp['control_mode']==controlMode)]
+            dfTemp = dfTemp.loc[(dfTemp['control_mode']==controlMode)]
                             
         # Select only the columns that are for the desired turbines
         # This only works for up to 1000 turbines, otherwise formatting gets messed up
@@ -166,6 +165,8 @@ class energyGain():
             return sadMessage
         
         avg = dfPower.mean(axis=None, skipna=True, numeric_only=True)
+        
+        
      
         return avg
     
@@ -371,15 +372,16 @@ class energyGain():
             df = self.df.copy()
         
         # Filter for conditions out of the bound of interest
-        df = df[(df[self.wdCol]>=windDirectionSpecs[0]) & (df[self.wdCol]<windDirectionSpecs[1]) &
+        df = df.loc[(df[self.wdCol]>=windDirectionSpecs[0]) & (df[self.wdCol]<windDirectionSpecs[1]) &
                 (df[self.wsCol]>=windSpeedSpecs[0]) & (df[self.wsCol]<windSpeedSpecs[1])]
         
         # Calculating the bins
+        pd.options.mode.chained_assignment = None
         if "direction" in stepVars:
             df["directionBinLowerBound"] = (((df[self.wdCol]-windDirectionSpecs[0])//windDirectionSpecs[2])*windDirectionSpecs[2])+windDirectionSpecs[0]
         if "speed" in stepVars:
             df["speedBinLowerBound"] = (((df[self.wsCol]-windSpeedSpecs[0])//windSpeedSpecs[2])*windSpeedSpecs[2])+windSpeedSpecs[0]
-        
+        pd.options.mode.chained_assignment = 'warn'
         # Update self.df if desired
         if not copy:
             self.df = df
@@ -442,6 +444,7 @@ class energyGain():
             return dfLong
         
         # Calculating average by group
+        
         dfGrouped = dfLong.groupby(by=colsToKeep).agg(averagePower = pd.NamedAgg(column="power", 
                                                                                  aggfunc=np.mean),
                                                       numObvs = pd.NamedAgg(column="power", 
@@ -462,6 +465,9 @@ class energyGain():
         # Don't need these columns anymore since they are a part of the multi-index
         dfGrouped.drop(columns=colsToKeep, inplace=True)
         return dfGrouped
+        
+
+        
         
     # Fix comments later
     def computeAll(self, stepVars = ["direction", "speed"], 
@@ -486,6 +492,7 @@ class energyGain():
         df : pandas data frame
             Nicely formatted dataframe that can go directly into aepGain.
         """
+        
         if windDirectionSpecs is None:
             windDirectionSpecs = self.defaultWindDirectionSpecs
             
@@ -635,20 +642,23 @@ class energyGain():
             df["aepGainContribution"] = df["aepGainContribution"]*(1/denom)
         
         aep = hours*np.nansum(df[('aepGainContribution', '', '')])    
-        print(aep)
+        #print(aep)
         return (df, aep)
     
     def bootstrapSamples(self, B=1000, seed=None):
         
         start = default_timer()
-        samples = np.ndarray(B, dtype=pd.core.frame.DataFrame)
+        samples = np.full(B, None, dtype=pd.core.frame.DataFrame)
         
-    
+        
+        prng = np.random.default_rng(seed=seed)
+        
         nrow = self.df.shape[0]
         for rep in range(B):
+            prng.random()
             dfTemp = self.df.sample(n=nrow,
                                     replace=True,
-                                    random_state=seed)
+                                    random_state=prng)
             
             dfTemp.reset_index(drop=True,inplace=True)
             samples[rep] = dfTemp
@@ -665,7 +675,7 @@ class energyGain():
                           windDirectionSpecs=None, windSpeedSpecs=None,
                           B=1000, seed=None, metric="percentPowerGain", useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
-                          retainReps = False, **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
+                          retainReps = False, diagnose=True, **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
         
@@ -692,6 +702,7 @@ class energyGain():
         
         # Get an array of the bootstrap samples
         bootstrapDFs = self.bootstrapSamples(B=B, seed=seed)
+        bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
         
         if metric=="aepGain":
             metricArray = np.full(shape=B, fill_value=None, dtype=float)
@@ -713,7 +724,7 @@ class energyGain():
             
             computeall = self.computeAll(stepVars, windDirectionSpecs,
                                          windSpeedSpecs, useReference, df=binall)
-            
+            bootstrapDFbinned[bootstrap] = binadder
             if metric == "aepGain":
                 aep = self.aepGain(windDirectionSpecs=windDirectionSpecs,
                                    windSpeedSpecs=windSpeedSpecs,
@@ -744,7 +755,8 @@ class energyGain():
                       "meanPlusSE": meanPlusSE,
                       "median":  np.nanmedian(metricArray),
                       "upperPercentile": np.nanpercentile(metricArray, q=upperPercentile),
-                      "lowerPercentile": np.nanpercentile(metricArray, q=lowerPercentile)}
+                      "lowerPercentile": np.nanpercentile(metricArray, q=lowerPercentile),
+                      "se": se}
             duration = default_timer() - start
             print("Overall:", duration)
             if retainReps:
@@ -776,6 +788,12 @@ class energyGain():
                            'median', 'upperPercentile', 'lowerPercentile',
                            'se', 'nObvs']]
         
+        #breakpoint()
+        if diagnose:
+            dfBinned = self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs)
+            dfGrouped = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, False, False, df=dfBinned)
+            self.bootstrapDiagnostics(dfBinned, dfGrouped, bootstrapDFbinned, stepVars)
+        
         duration = default_timer() - start
         print("Overall:", duration)
             
@@ -786,6 +804,90 @@ class energyGain():
         return dfStats
     
     
+    def bootstrapDiagnostics(self, dfBinned, dfGrouped, bootstrapDFBinnedList, stepVars):
+        # look at the distribution of the samples
+        # assuming 2d for now
+        
+        
+        X = np.ndarray(0)
+        Y = np.ndarray(0)
+        
+        
+        for df in bootstrapDFBinnedList:
+            tempX = np.asarray(df["directionBinLowerBound"])
+            X = np.concatenate((X,tempX))
+            tempY = np.asarray(df["speedBinLowerBound"])
+            Y = np.concatenate((Y,tempY))
+            
+        speedEdges = np.unique(np.asarray(dfBinned["speedBinLowerBound"]))
+        directionEdges = np.unique(np.asarray(dfBinned["directionBinLowerBound"]))
+        
+        plt.style.use('_mpl-gallery-nogrid')
+        
+        # Densities
+        fig, axs = plt.subplots(nrows=1, ncols=2, 
+                                sharex=True, sharey=True, 
+                                figsize=(7,5), layout='constrained')
+        
+        h0 = axs[0].hist2d(x=X, y=Y, bins=[directionEdges, speedEdges], 
+                            cmap='plasma', density=True)
+        h1 = axs[1].hist2d(x=dfBinned['directionBinLowerBound'], 
+                      y=dfBinned['speedBinLowerBound'], 
+                      bins=[directionEdges, speedEdges], 
+                      cmap='plasma',
+                      density=True)
+        
+        legend = fig.colorbar(h1[3], ax=[axs[0],axs[1]])
+        
+        ## Tick marks at multiples of 5 and 1
+        for ax in axs:
+            ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
+            ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
+            ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
+            ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
+        
+        ## Labels
+        axs[0].set_title("Real Data")
+        axs[1].set_title("Pooled Bootstrap Samples")
+        fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
+        fig.supylabel("Wind Speed (m/s)")
+        fig.suptitle("Densities", fontsize=17)
+        legend
+        plt.show()
+        
+        # Standard errors:
+        figSE, axsSE = plt.subplots(nrows=1, ncols=2, 
+                                sharex=True, sharey=True, 
+                                figsize=(7,5), layout='constrained')
+        
+        ax0 = axs[0].hist2d(x=X, y=Y, bins=[directionEdges, speedEdges], 
+                            cmap='plasma', density=True)
+        ax1 = axs[1].hist2d(x=dfBinned['directionBinLowerBound'], 
+                      y=dfBinned['speedBinLowerBound'], 
+                      bins=[directionEdges, speedEdges], 
+                      cmap='plasma',
+                      density=True)
+        
+        legend = fig.colorbar(ax1[3], ax=[axs[0],axs[1]])
+        
+        # Tick marks at multiples of 5 and 1
+        for ax in axs:
+            ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
+            ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
+            ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
+            ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
+        
+        # Labels
+        axs[0].set_title("Real Data")
+        axs[1].set_title("Pooled Bootstrap Samples")
+        fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
+        fig.supylabel("Wind Speed (m/s)")
+        fig.suptitle("Densities", fontsize=17)
+        legend
+        plt.show()
+        
+        
+        return None
     
     
     
