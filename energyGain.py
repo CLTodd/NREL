@@ -805,7 +805,13 @@ class energyGain():
         if diagnose:
             dfBinned = self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs)
             dfGrouped = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, False, False, df=dfBinned)
-            self.bootstrapDiagnostics(dfBinned, dfStats, bootstrapDFbinned, stepVars, colors)
+            self.bootstrapDiagnostics(dfBinned,
+                                      dfStats, 
+                                      bootstrapDFbinned, 
+                                      stepVars, 
+                                      windDirectionSpecs, 
+                                      windSpeedSpecs,
+                                      colors)
         
         duration = default_timer() - start
         print("Overall:", duration)
@@ -818,7 +824,9 @@ class energyGain():
     
     
     def bootstrapDiagnostics(self, dfBinned, dfStats,
-                             bootstrapDFBinnedList, stepVars, colors=['turbo', 'cmr.bubblegum_r','cmr.wildfire']):
+                             bootstrapDFBinnedList, stepVars,
+                             windDirectionSpecs, windSpeedSpecs,
+                             colors=['turbo', 'cmr.bubblegum_r','cmr.wildfire']):
         # look at the distribution of the samples
         # assuming 2d for now
         
@@ -827,8 +835,8 @@ class energyGain():
         ## Getting the data
         X1 = np.ndarray(0)
         Y1 = np.ndarray(0)
-        directionEdges = np.unique(np.asarray(dfBinned["directionBinLowerBound"]))
-        speedEdges = np.unique(np.asarray(dfBinned["speedBinLowerBound"]))
+        directionEdges = np.arange(*windDirectionSpecs)
+        speedEdges = np.arange(*windSpeedSpecs)
         ### Just in case indices are out of order
         dfStats.index = dfStats.index.reorder_levels(order=['directionBinLowerBound','speedBinLowerBound'])
         ### Pool the bootstrap samples
@@ -904,9 +912,7 @@ class energyGain():
                              [mIWperc, mIWci],
                              [mCenterMean, mCenterMed]])
         ## Plotting
-        extent = [np.min(directionEdges), np.max(directionEdges),
-                  np.min(speedEdges), np.max(speedEdges)]
-                
+
         ### Need to shift the diverging colormap to be centerd at 0
         
         ### Set up the plotting field
@@ -931,11 +937,16 @@ class energyGain():
                 grid[i].yaxis.set_minor_locator(mticker.MultipleLocator(1))
                 grid[i].tick_params(which='major', length=5)
                 grid[i].tick_params(which='minor', length=4)
-                hm=grid[i].imshow(X=M, cmap=colors[plot], interpolation=None, 
+                hm=grid[i].imshow(X=M, cmap=colors[plot], interpolation='none', 
                                   origin='lower', extent=extent)
+                grid[i].grid(which='both')
+                
             
             cbar = grid[1].cax.colorbar(hm)
             cbar = grid.cbar_axes[1].colorbar(hm)
+            
+        
+            
             grid.axes_all[0].set_title(pArray[plot][1], fontsize=15)
             grid.axes_all[1].set_title(pArray[plot][2], fontsize=15)
             
