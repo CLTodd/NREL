@@ -11,6 +11,7 @@ import matplotlib.colors as mplc
 import matplotlib.ticker as mticker
 from mpl_toolkits.axes_grid1 import AxesGrid
 import numpy as np
+import seaborn as sns
 import cmasher as cmr 
 from timeit import default_timer
 import re
@@ -682,7 +683,7 @@ class energyGain():
                           B=1000, seed=None, metric="percentPowerGain", useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
                           retainReps = False, diagnose=True,
-                          colors=['turbo','cmr.bubblegum_r','cmr.wildfire'], **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
+                          colors=['cmr.iceburn','plasma','RdYlBu', 'plasma'], **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
         
@@ -811,6 +812,7 @@ class energyGain():
                                       stepVars, 
                                       windDirectionSpecs, 
                                       windSpeedSpecs,
+                                      metric,
                                       colors)
         
         duration = default_timer() - start
@@ -826,7 +828,8 @@ class energyGain():
     def bootstrapDiagnostics(self, dfBinned, dfStats,
                              bootstrapDFBinnedList, stepVars,
                              windDirectionSpecs, windSpeedSpecs,
-                             colors=['turbo', 'cmr.bubblegum_r','cmr.wildfire']):
+                             metric,
+                             colors=['turbo', 'turbo','turbo','turbo']):
         # look at the distribution of the samples
         # assuming 2d for now
         
@@ -850,22 +853,39 @@ class energyGain():
         X2 = dfBinned['directionBinLowerBound']
         Y2 = dfBinned['speedBinLowerBound']
         
-        ## Plotting
-        plt.style.use('_mpl-gallery-nogrid')
-               
+        # Not the correct way to do this but it works for now
+        xlabels = []
+
+        for num in np.arange(*windDirectionSpecs):
+            if num%5==0:
+                xlabels.append(str(num))
+                continue
+            xlabels.append(" ")
+            
+        ylabels = []
+        for num in np.arange(*windSpeedSpecs):
+            if num%5==0:
+                ylabels.append(str(num))
+                continue
+            ylabels.append(" ")
+        
+        ## Plotting   
         fig, axs = plt.subplots(nrows=1, ncols=2, 
                                 sharex=True, sharey=True, 
-                                figsize=(7,5), layout='constrained')
+                                figsize=(10,5), layout='constrained')
         ### Histograms
-        h0 = axs[0].hist2d(x=X1, y=Y1, 
-                           bins=[directionEdges, speedEdges],
-                           cmap='plasma', density=True)
-        h1 = axs[1].hist2d(x=X2, y=Y2, 
-                      bins=[directionEdges, speedEdges], 
-                      cmap='plasma',
-                      density=True)
+        width = np.min(np.asarray([windDirectionSpecs[2], windSpeedSpecs[2]]))
         
-        colorbar = fig.colorbar(h1[3], ax=[axs[0],axs[1]])
+        h0 = sns.histplot(dfBinned,
+                          x='directionBinLowerBound', y='speedBinLowerBound',
+                          cbar=True, stat='density', thresh=None,
+                          binwidth = width, ax=axs[1], linewidth=1,
+                          cmap=sns.color_palette("rocket_r", as_cmap=True))
+              
+        h1 = sns.histplot(x=X2, y=Y2, stat='density',thresh=None,
+                          binwidth=width, ax=axs[0], linewidth=1,
+                          cmap=sns.color_palette("rocket_r", as_cmap=True))
+        
         
         ### Tick marks at multiples of 5 and 1
         for ax in axs:
@@ -873,25 +893,30 @@ class energyGain():
             ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
             ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
             ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
-
+            ax.tick_params(which="major", bottom=True, length=5)
+            ax.tick_params(which="minor", bottom=True, length=3)
+            ax.set_xlabel("", fontsize=0)
+            ax.set_ylabel("", fontsize=0)
         
         ### Labels
-        axs[0].set_title("Real Data")
-        axs[1].set_title("Pooled Bootstrap Samples")
-        fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
-        fig.supylabel("Wind Speed (m/s)")
+        axs[1].set_title("Real Data")
+        axs[0].set_title("Pooled Bootstrap Samples")
+        fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})", fontsize=15) #unicode formatted
+        fig.supylabel("Wind Speed (m/s)",fontsize=15)
         fig.suptitle("Densities", fontsize=17)
         plt.show()
-        
+
         # Heatmaps
         
         ## Getting the data
-        mVarSE,mVarIQR,mIWperc,mIWci,mCenterMean,mCenterMed = [np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float) for i in range(6)]
-        ## 3 types of plots: variance, CI width, and Centers
-        pArray = np.asarray([["Variance", "SE", "IQR"],
-                             ["Confidence Interval Widths", "SE Method", "Percentile Method"],
-                             ["Centers", "Mean","Median"]])
-        
+        #mVarSE,mVarIQR,mIWperc,mIWci,mCenterMean,mCenterMed,mPosNegCI, mPosNegPerc = [np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float) for i in range(8)]
+        mCenterMean,mCenterMed,mVarSE,mVarIQR, mPosNegCI, mPosNegPerc,mIWperc,mIWci = [np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float) for i in range(8)]
+        ## 4 types of plots: Centers, variance, CI width, and CI sign )pos/neg)
+        pArray = np.asarray([["Centers", "Mean","Median"],
+                             ["Variance", "SE", "IQR"],
+                             ["Interval Coverage", "SE Method", "Percentile Method"],
+                             ["Confidence Interval Widths", "SE Method", "Percentile Method"]])
+        #breakpoint()
         for speedIdx in range(speedEdges.size):
             for directIdx in range(directionEdges.size):
                 try:
@@ -905,58 +930,82 @@ class energyGain():
                                                                                                           speedEdges[speedIdx])]['meanMinusSe']
                     mCenterMean[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['mean']
                     mCenterMed[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['median']
+                    
+                    
+                    if dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['meanPlusSe']<0:
+                        mPosNegCI[speedIdx, directIdx] = -1
+                    elif dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['meanMinusSe']>0:
+                        mPosNegCI[speedIdx, directIdx] = 1
+                    else:
+                        mPosNegCI[speedIdx, directIdx] = 0
+                        
+                    if dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['upperPercentile']<0:
+                        mPosNegPerc[speedIdx, directIdx] = -1
+                    elif dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['lowerPercentile']>0:
+                        mPosNegPerc[speedIdx, directIdx] = 1
+                    else:
+                        mPosNegPerc[speedIdx, directIdx] = 0
+                    
+                    
                 except KeyError:
                     continue
         
-        mArray = np.asarray([[mVarSE, mVarIQR], 
-                             [mIWperc, mIWci],
-                             [mCenterMean, mCenterMed]])
-        ## Plotting
-
-        ### Need to shift the diverging colormap to be centerd at 0
+        mArray = np.asarray([[mCenterMean,mCenterMed], 
+                             [mVarSE,mVarIQR],
+                             [mPosNegCI, mPosNegPerc],
+                             [mIWperc,mIWci]])
         
+        ## Plotting
+        #breakpoint()
         ### Set up the plotting field
         for plot in range(pArray.shape[0]):
             plt.clf()
-            fig = plt.figure(figsize=(7,5), layout='constrained')
-            grid = AxesGrid(fig, rect=111,
-                nrows_ncols=(1, 2),
-                axes_pad=0.1,
-                cbar_mode='single',
-                cbar_location='right',
-                cbar_pad=0.1, share_all=True)
+            fig, axs = plt.subplots(nrows=1, ncols=2,
+                                    sharex=True, sharey=True, 
+                                    figsize=(7,5), layout='constrained')
             
             ### Set up the individual heatmaps
             for i in range(2):
                 ### Get data
                 M = mArray[plot][i]
-                # Boxes are NOT aligned
-                grid[i].xaxis.set_major_locator(mticker.MultipleLocator(5))
-                grid[i].yaxis.set_major_locator(mticker.MultipleLocator(5))
-                grid[i].xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
-                grid[i].yaxis.set_minor_locator(mticker.MultipleLocator(1))
-                grid[i].tick_params(which='major', length=5)
-                grid[i].tick_params(which='minor', length=4)
-                hm=grid[i].imshow(X=M, cmap=colors[plot], interpolation='none', 
-                                  origin='lower', extent=extent)
-                grid[i].grid(which='both')
                 
-            
-            cbar = grid[1].cax.colorbar(hm)
-            cbar = grid.cbar_axes[1].colorbar(hm)
-            
-        
-            
-            grid.axes_all[0].set_title(pArray[plot][1], fontsize=15)
-            grid.axes_all[1].set_title(pArray[plot][2], fontsize=15)
+                axs[i]=sns.heatmap(M,center=0, square=True, linewidths=0, 
+                                   ax=axs[i], cbar=bool(i), cbar_kws={"shrink": .8},
+                                   annot=False, cmap=colors[plot], robust=True)
+
+                
+                
+                #breakpoint()
+                axs[i].yaxis.set_minor_locator(mticker.MultipleLocator(0.5))
+                axs[i].invert_yaxis()
+                axs[i].xaxis.set_minor_locator(mticker.MultipleLocator(0.5))
+                axs[i].xaxis.tick_bottom()
+
+                axs[i].tick_params(which="minor", bottom=True, length=6, color='grey')
+                axs[i].tick_params(which="major", bottom=True, length=0, color='grey', 
+                               grid_linewidth=0)
+                axs[i].set_xticklabels(xlabels, rotation=-90)
+                axs[i].set_yticklabels(ylabels, rotation=0)
+                
+                axs[i].grid(which='minor', visible=True, color='#d9d9d9',linestyle='-',
+                        linewidth=1)
+                
+                #axs[0].set_xlabel("Direction", fontsize=12)
+                #axs[0].set_ylabel("Speed", fontsize=12)
+                axs[i].set_title(pArray[plot][i+1], fontsize=13)                          
+
+
+            #fig.axes_all[0].set_title(pArray[plot][1], fontsize=15)
+            #fig.axes_all[1].set_title(pArray[plot][2], fontsize=15)
+            axs[1].tick_params(which="minor", bottom=True, length=0, color='white')
             
             ### Labels
-            fig.suptitle(pArray[plot][0], fontsize=17)
             fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})", fontsize=15) #unicode formatted
-            grid[0].set_ylabel("Wind Speed (m/s)", fontsize=15) # supylayout does not work here
-            
+            fig.supylabel("Wind Speed (m/s)",fontsize=15)
+            fig.suptitle(f"{pArray[plot][0]} ({metric})", fontsize=17)
             plt.show()
-
+        
+        
         return None
     
     
