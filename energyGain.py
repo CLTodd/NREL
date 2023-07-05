@@ -472,10 +472,7 @@ class energyGain():
         # Don't need these columns anymore since they are a part of the multi-index
         dfGrouped.drop(columns=colsToKeep, inplace=True)
         return dfGrouped
-        
-
-        
-        
+              
     # Fix comments later
     def computeAll(self, stepVars = ["direction", "speed"], 
                    windDirectionSpecs=None, windSpeedSpecs=None,
@@ -675,14 +672,13 @@ class energyGain():
         print("Sampling Time:", duration)
         
         return samples
-    
-  
+     
     # Need to completely rewrite this so that it works with computeAll
     def bootstrapEstimate(self, stepVars=["direction","speed"], 
                           windDirectionSpecs=None, windSpeedSpecs=None,
                           B=1000, seed=None, metric="percentPowerGain", useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
-                          retainReps = False, diagnose=True,
+                          retainReps = False, diagnose=True, repsArray=None,
                           colors=['cmr.iceburn','plasma','RdYlBu', 'plasma'], **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
@@ -703,15 +699,20 @@ class energyGain():
         if windSpeedSpecs is None:
             windSpeedSpecs = self.defaultWindSpeedSpecs
             
+            
         start = default_timer()
         
         if type(stepVars) is str:    
             stepVars = list([stepVars])
         
         # Get an array of the bootstrap samples
-        bootstrapDFs = self.bootstrapSamples(B=B, seed=seed)
-        bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
-        
+        if repsArray is None:
+            bootstrapDFs = self.bootstrapSamples(B=B, seed=seed)
+        else:
+            bootstrapDFs = repsArray
+            B = bootstrapDFs.size
+
+
         if metric=="aepGain":
             metricArray = np.full(shape=B, fill_value=None, dtype=float)
         else:
@@ -724,8 +725,11 @@ class energyGain():
                 finalCols.append(name)
                 finalColsMultiIdx.append((name,'',''))
         
+        bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
+        
         for bootstrap in range(B):
             currentDF = bootstrapDFs[bootstrap]
+            
             # get into correct format
             binadder =self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs, df=currentDF)
             binall = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, df=binadder)
@@ -776,7 +780,7 @@ class energyGain():
 
         # Compute Sampling distribution statistics for each wind condition bin
         finalCols.pop(0)
-        dfStats = metricDF.groupby(by=finalCols).agg(mean=pd.NamedAgg(column=metric,
+        dfSummary = metricDF.groupby(by=finalCols).agg(mean=pd.NamedAgg(column=metric,
                                                                       aggfunc=np.mean),
                                                      se=pd.NamedAgg(column=metric,
                                                                     aggfunc=np.nanstd),
@@ -793,46 +797,46 @@ class energyGain():
                                                      thirdQuartile= pd.NamedAgg(column=metric,
                                                                                  aggfunc=lambda x: np.nanpercentile(x,75)))
         
-        seMultd = seMultiplier*dfStats["se"]
-        dfStats["meanMinusSe"] = np.subtract(dfStats["mean"], seMultd)
-        dfStats["meanPlusSe"] = np.add(dfStats["mean"], seMultd)
-        dfStats["iqr"] = np.subtract(dfStats['thirdQuartile'], dfStats['firstQuartile'])
+        seMultd = seMultiplier*dfSummary["se"]
+        dfSummary["meanMinusSE"] = np.subtract(dfSummary["mean"], seMultd)
+        dfSummary["meanPlusSE"] = np.add(dfSummary["mean"], seMultd)
+        dfSummary["iqr"] = np.subtract(dfSummary['thirdQuartile'], dfSummary['firstQuartile'])
+        dfSummary["metric"] = metric
         
-        dfStats = dfStats[["mean",'meanMinusSe','meanPlusSe', 
+        dfSummary = dfSummary[["mean",'meanMinusSE','meanPlusSE', 
                            'median', 'upperPercentile', 'lowerPercentile',
-                           'se', 'iqr','nObvs']]
+                           'se', 'iqr','nObvs', 'metric']]
         
-        #breakpoint()
+        
         if diagnose:
             dfBinned = self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs)
             dfGrouped = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, False, False, df=dfBinned)
             self.bootstrapDiagnostics(dfBinned,
-                                      dfStats, 
+                                      dfSummary, 
                                       bootstrapDFbinned, 
                                       stepVars, 
                                       windDirectionSpecs, 
                                       windSpeedSpecs,
-                                      metric,
                                       colors)
         
         duration = default_timer() - start
         print("Overall:", duration)
             
         if retainReps:
-            return {"summary": dfStats, "reps":bootstrapDFs}
+            return {"summary": dfSummary, "reps":bootstrapDFs}
             
         
-        return dfStats
+        return dfSummary
     
     
-    def bootstrapDiagnostics(self, dfBinned, dfStats,
+    def bootstrapDiagnostics(self, dfBinned, dfSummary,
                              bootstrapDFBinnedList, stepVars,
                              windDirectionSpecs, windSpeedSpecs,
-                             metric,
                              colors=['turbo', 'turbo','turbo','turbo']):
         # look at the distribution of the samples
         # assuming 2d for now
         
+        metric= dfSummary['metric'].iloc[1]
         # 2d Histogram
         
         ## Getting the data
@@ -841,7 +845,7 @@ class energyGain():
         directionEdges = np.arange(*windDirectionSpecs)
         speedEdges = np.arange(*windSpeedSpecs)
         ### Just in case indices are out of order
-        dfStats.index = dfStats.index.reorder_levels(order=['directionBinLowerBound','speedBinLowerBound'])
+        dfSummary.index = dfSummary.index.reorder_levels(order=['directionBinLowerBound','speedBinLowerBound'])
         ### Pool the bootstrap samples
         for df in bootstrapDFBinnedList:
             tempX = np.asarray(df["directionBinLowerBound"])
@@ -916,32 +920,32 @@ class energyGain():
                              ["Variance", "SE", "IQR"],
                              ["Interval Coverage", "SE Method", "Percentile Method"],
                              ["Confidence Interval Widths", "SE Method", "Percentile Method"]])
-        #breakpoint()
+
         for speedIdx in range(speedEdges.size):
             for directIdx in range(directionEdges.size):
                 try:
-                    mVarSE[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['se']
-                    mVarIQR[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['iqr']
-                    mIWperc[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],
-                                                               speedEdges[speedIdx])]['upperPercentile'] - dfStats.loc[(directionEdges[directIdx],
+                    mVarSE[speedIdx, directIdx] = dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['se']
+                    mVarIQR[speedIdx, directIdx] = dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['iqr']
+                    mIWperc[speedIdx, directIdx] = dfSummary.loc[(directionEdges[directIdx],
+                                                               speedEdges[speedIdx])]['upperPercentile'] - dfSummary.loc[(directionEdges[directIdx],
                                                                                                           speedEdges[speedIdx])]['lowerPercentile']
-                    mIWci[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],
-                                                               speedEdges[speedIdx])]['meanPlusSe'] - dfStats.loc[(directionEdges[directIdx],
-                                                                                                          speedEdges[speedIdx])]['meanMinusSe']
-                    mCenterMean[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['mean']
-                    mCenterMed[speedIdx, directIdx] = dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['median']
+                    mIWci[speedIdx, directIdx] = dfSummary.loc[(directionEdges[directIdx],
+                                                               speedEdges[speedIdx])]['meanPlusSE'] - dfSummary.loc[(directionEdges[directIdx],
+                                                                                                          speedEdges[speedIdx])]['meanMinusSE']
+                    mCenterMean[speedIdx, directIdx] = dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['mean']
+                    mCenterMed[speedIdx, directIdx] = dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['median']
                     
                     
-                    if dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['meanPlusSe']<0:
+                    if dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['meanPlusSE']<0:
                         mPosNegCI[speedIdx, directIdx] = -1
-                    elif dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['meanMinusSe']>0:
+                    elif dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['meanMinusSE']>0:
                         mPosNegCI[speedIdx, directIdx] = 1
                     else:
                         mPosNegCI[speedIdx, directIdx] = 0
                         
-                    if dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['upperPercentile']<0:
+                    if dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['upperPercentile']<0:
                         mPosNegPerc[speedIdx, directIdx] = -1
-                    elif dfStats.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['lowerPercentile']>0:
+                    elif dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['lowerPercentile']>0:
                         mPosNegPerc[speedIdx, directIdx] = 1
                     else:
                         mPosNegPerc[speedIdx, directIdx] = 0
@@ -956,13 +960,13 @@ class energyGain():
                              [mIWperc,mIWci]])
         
         ## Plotting
-        #breakpoint()
+
         ### Set up the plotting field
         for plot in range(pArray.shape[0]):
             plt.clf()
             fig, axs = plt.subplots(nrows=1, ncols=2,
                                     sharex=True, sharey=True, 
-                                    figsize=(7,5), layout='constrained')
+                                    figsize=(10,5), layout='constrained')
             
             ### Set up the individual heatmaps
             for i in range(2):
@@ -973,9 +977,7 @@ class energyGain():
                                    ax=axs[i], cbar=bool(i), cbar_kws={"shrink": .8},
                                    annot=False, cmap=colors[plot], robust=True)
 
-                
-                
-                #breakpoint()
+
                 axs[i].yaxis.set_minor_locator(mticker.MultipleLocator(0.5))
                 axs[i].invert_yaxis()
                 axs[i].xaxis.set_minor_locator(mticker.MultipleLocator(0.5))
@@ -1006,60 +1008,82 @@ class energyGain():
             plt.show()
         
         
-        return None
+        return None 
     
-    
-    
-    # Revisit these plotting functions, a lot has been changed since I last used them
-    # Change this name later, probably
-    # I just realized the tick marks might behave weirdly if either stepsize is specified to be less than on, there was a smart tick mark picker that I could use instead
-    def heatmap(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], 
-                heatmapMatrix=None, colorMap="seismic", title="Percent Power Gain"):
+    # Seems inefficient 
+    def lineplotBE(self, dfSummary=None, repsArray=None, windDirectionSpecs=None, windSpeedSpecs=None, 
+             stepVar="direction", useReference=True, **BEargs):
         """
-        For plotting a heatmap of some metric over many wind condition bins
-        
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
         windSpeedSpecs: list of length 3, specifications for wind speed bins--
             [lower bound (inclusive), upper bound (exclusive), bin width]
-        heatmapMatrix: Matrix, can pass in a matrix of  data 
-            Right now the default is to compute a matrix od percent power gain 
-            measurements if no matrix is provided.
-        colorMap: any color mapping that works with matplotlib. 
-            Diverging color maps and colormaps that exclude white are recommended.
-        title: string,
         """
-
-        # Compute matrix of data if needed
-        if heatmapMatrix is None:
-            print("Computing matrix of Percent Power Gain measurements")
-            heatmapMatrix = self.compute2D(self.percentPowerGain,
-                                           windDirectionSpecs,
-                                           windSpeedSpecs)["data"]
+        if windDirectionSpecs is None:
+            windDirectionSpecs = self.defaultWindDirectionSpecs
             
-        fig, ax = plt.subplots()
-        heatmap = plt.imshow(heatmapMatrix, cmap=colorMap, 
-                             interpolation=None, origin='lower')
+        if windSpeedSpecs is None:
+            windSpeedSpecs = self.defaultWindSpeedSpecs
+            
+        fig, axs = plt.subplots(nrows=1, ncols=2,
+                                sharex=True, sharey=True, 
+                                figsize=(20,7), layout='constrained')
+    
+        # put other scenarios in here
+        if (dfSummary is None) and (repsArray is not None):
+            dfSummary=self.bootstrapEstimate(stepVars=stepVar,
+                                   windDirectionSpecs=windDirectionSpecs,
+                                   windSpeedSpecs=windSpeedSpecs,
+                                   repsArray=repsArray,
+                                   metric="percentPowerGain", 
+                                   useReference=useReference,
+                                   diagnose=False,
+                                   retainReps = False,
+                                   **BEargs)
+            
+        metric = dfSummary['metric'].iloc[1]
         
-        # Tick marks at multiples of 5 and 1
-        ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
-        ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
-        ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
-        ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
+        X = dfSummary.index.get_level_values(f'{stepVar}BinLowerBound')
         
+        yMean = dfSummary['mean']
+        yUpperSE = dfSummary['meanPlusSE']
+        yLowerSE = dfSummary['meanMinusSE']
         
-        # Labels
-        ax.set_title(title)
-        ax.set_xlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
-        ax.set_ylabel("Wind Speed (m/s)")
-
-        fig.colorbar(heatmap) # legend
-
+        yMed = dfSummary['median']
+        yUpperPerc = dfSummary['upperPercentile']
+        yLowerPerc = dfSummary['lowerPercentile']
+        
+        axs[0].axhline(0, color='black', linestyle='dotted')
+        axs[0].plot(X, yMean, linestyle='-', marker='.', markersize=10)
+        axs[0].fill_between(x=X, y1=yUpperSE,y2=yLowerSE, alpha=0.4)
+        axs[0].grid()
+        axs[0].set_title("SE Method", fontsize=13)
+        
+        axs[1].axhline(0, color='black', linestyle='dotted')
+        axs[1].plot(X, yMed, linestyle='-', marker='.',markersize=10)
+        axs[1].fill_between(x=X, y1=yUpperPerc,y2=yLowerPerc, alpha=0.4)
+        axs[1].grid()
+        axs[1].set_title("Percentile Method", fontsize=13)
+        
+        if stepVar=='speed':
+            xAxis = "Wind Speed (m/s)"
+            title = f"Wind Directions {windDirectionSpecs[0]}" + u"\N{DEGREE SIGN}" + f" - {windDirectionSpecs[1]}" + u"\N{DEGREE SIGN}"
+        else:
+            xAxis = u"Wind Direction (\N{DEGREE SIGN})"
+            title = f"Wind Speeds {windSpeedSpecs[0]} to {windSpeedSpecs[1]} m/s"
+        fig.supxlabel(xAxis, fontsize=13) #unicode formatted
+        fig.supylabel(f"{metric} bootstrap centers",fontsize=13)
+        fig.suptitle(title, fontsize=17)
         plt.show()
         
-        return heatmapMatrix
-    
-    
+        
+        
+            
+            
+        
+        
+        return None    
+ 
     
     # Change this name later
     # pct power gain only right now
