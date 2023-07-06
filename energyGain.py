@@ -676,14 +676,13 @@ class energyGain():
     # Need to completely rewrite this so that it works with computeAll
     def bootstrapEstimate(self, stepVars=["direction","speed"], 
                           windDirectionSpecs=None, windSpeedSpecs=None,
-                          B=1000, seed=None, metric="percentPowerGain", useReference=True,
+                          B=1000, seed=None, useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
                           retainReps = False, diagnose=True, repsArray=None,
-                          colors=['cmr.iceburn','plasma','RdYlBu', 'plasma'], **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
+                          **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
         
-        metric = string, one of changeInPowerRatio, percentPowerGain
 
         windDirectionSpecs: list of length 3, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
@@ -712,18 +711,15 @@ class energyGain():
             bootstrapDFs = repsArray
             B = bootstrapDFs.size
 
-
-        if metric=="aepGain":
-            metricArray = np.full(shape=B, fill_value=None, dtype=float)
-        else:
-            finalCols = list([metric])
-            finalColsMultiIdx = list([(metric, '','')])
+        
+        finalCols = ['percentPowerGain', 'changeInPowerRatio']
+        finalColsMultiIdx = [('percentPowerGain', '',''),
+                             ('changeInPowerRatio', '','')]
             
-            for var in stepVars:
-                #metricDict[var] = nones
-                name = f'{var}BinLowerBound'
-                finalCols.append(name)
-                finalColsMultiIdx.append((name,'',''))
+        for var in stepVars:
+            name = f'{var}BinLowerBound'
+            finalCols.append(name)
+            finalColsMultiIdx.append((name,'',''))
         
         bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
         
@@ -737,14 +733,6 @@ class energyGain():
             computeall = self.computeAll(stepVars, windDirectionSpecs,
                                          windSpeedSpecs, useReference, df=binall)
             bootstrapDFbinned[bootstrap] = binadder
-            if metric == "aepGain":
-                aep = self.aepGain(windDirectionSpecs=windDirectionSpecs,
-                                   windSpeedSpecs=windSpeedSpecs,
-                                   df=computeall, **AEPargs)
-                metricArray[bootstrap] = aep[1]
-                continue
-                
-                
             
             binStats = computeall[finalColsMultiIdx]
             # Multi-index on the columns makes indexing annoying when all but one level is empty
@@ -752,81 +740,133 @@ class energyGain():
             # Make sure columns are in the right order
             dfTemp = dfTemp[finalCols]
             
+            aepTemp = np.full(shape=(8,4), fill_value=np.nan, dtype=float)
+            i=0
+            for method in (1,2):
+                for abso in (0, 1):
+                    for useRef in (0, 1):
+                        aep = self.aepGain(aepMethod=method,
+                                       absolute=bool(abso),
+                                       useReference=bool(useRef),
+                                       windDirectionSpecs=windDirectionSpecs,
+                                       windSpeedSpecs=windSpeedSpecs,
+                                       df=computeall)
+                        
+                        aepTemp[i] = np.asarray([method, abso, useRef, aep[1]])
+                        i+=1
+            
             if bootstrap==0:
                 metricMatrix = np.asarray(dfTemp)
+                aepMatrix = aepTemp.copy()
+            else:
+                metricMatrix = np.concatenate((metricMatrix, np.asarray(dfTemp)), axis=0)
+                aepMatrix = np.concatenate((aepMatrix, np.asarray(aepTemp)), axis=0)
             
-            metricMatrix = np.concatenate((metricMatrix, np.asarray(dfTemp)), axis=0)
-            
-        if metric=="aepGain":
-            avg = np.nanmean(metricArray)
-            se =  np.nanstd(metricArray)
-            meanMinusSE = avg - seMultiplier*se
-            meanPlusSE = avg + seMultiplier*se
-            resultDict = {"mean": avg,
-                      "meanMinusSE": meanMinusSE,
-                      "meanPlusSE": meanPlusSE,
-                      "median":  np.nanmedian(metricArray),
-                      "upperPercentile": np.nanpercentile(metricArray, q=upperPercentile),
-                      "lowerPercentile": np.nanpercentile(metricArray, q=lowerPercentile),
-                      "se": se,
-                      "iqr": np.nanpercentile(metricArray, q=75)- np.nanpercentile(metricArray, q=25)}
-            duration = default_timer() - start
-            print("Overall:", duration)
-            if retainReps:
-                return {'summary': resultDict, 'reps': bootstrapDFs}
-            return resultDict
-       
-        metricDF = pd.DataFrame(data=metricMatrix, columns=finalCols)
+        aepDF = pd.DataFrame(data=aepMatrix, columns = ["aepMethod","absoluteAEP", "useReference","aepGain"])
+        
+        #for metric in ("percentPowerGain", "change")
+        
+        aepSummary = aepDF.groupby(by=["aepMethod","absoluteAEP", "useReference"]).agg(mean=pd.NamedAgg(column="aepGain",
+                                                                      aggfunc=np.mean),
+                                                     se=pd.NamedAgg(column="aepGain",
+                                                                    aggfunc=np.nanstd),
+                                                     median=pd.NamedAgg(column="aepGain",
+                                                                        aggfunc=np.nanmedian),
+                                                     upperPercentile=pd.NamedAgg(column="aepGain",
+                                                                                 aggfunc=lambda x: np.nanpercentile(x,upperPercentile)),
+                                                     lowerPercentile=pd.NamedAgg(column="aepGain",
+                                                                                 aggfunc=lambda x: np.nanpercentile(x, lowerPercentile)),
+                                                     nObvs = pd.NamedAgg(column="aepGain", 
+                                                                           aggfunc='count'),
+                                                     firstQuartile = pd.NamedAgg(column="aepGain",
+                                                                                 aggfunc=lambda x: np.nanpercentile(x,25)),
+                                                     thirdQuartile= pd.NamedAgg(column="aepGain",
+                                                                                 aggfunc=lambda x: np.nanpercentile(x,75)))
+        seMultdAEP = seMultiplier*aepSummary["se"]
+        aepSummary["meanMinusSE"] = np.subtract(aepSummary["mean"], seMultdAEP)
+        aepSummary["meanPlusSE"] = np.add(aepSummary["mean"], seMultdAEP)
+        aepSummary["iqr"] = np.subtract(aepSummary['thirdQuartile'], aepSummary['firstQuartile'])
+        # For convenience
+        aepSummary["metric"] = 'aepGain'
+        aepSummary["nReps"] = B
+        
+        aepSummary = aepSummary[["mean",'meanMinusSE','meanPlusSE', 
+                           'median', 'lowerPercentile', 'upperPercentile',
+                           'se', 'iqr','nObvs', 'metric', 'nReps']]
 
         # Compute Sampling distribution statistics for each wind condition bin
-        finalCols.pop(0)
-        dfSummary = metricDF.groupby(by=finalCols).agg(mean=pd.NamedAgg(column=metric,
+        metricDF = pd.DataFrame(data=metricMatrix, columns=finalCols)
+        metricDFlong = metricDF.melt(value_vars=['percentPowerGain', 'changeInPowerRatio'],
+                                     value_name='value',
+                                     var_name='metric',
+                                     id_vars=finalCols[2:])
+        
+        finalCols = list(metricDFlong)[:-1]
+        dfSummary = metricDFlong.groupby(by=finalCols).agg(mean=pd.NamedAgg(column='value',
                                                                       aggfunc=np.mean),
-                                                     se=pd.NamedAgg(column=metric,
+                                                     se=pd.NamedAgg(column='value',
                                                                     aggfunc=np.nanstd),
-                                                     median=pd.NamedAgg(column=metric,
+                                                     median=pd.NamedAgg(column='value',
                                                                         aggfunc=np.nanmedian),
-                                                     upperPercentile=pd.NamedAgg(column=metric,
+                                                     upperPercentile=pd.NamedAgg(column='value',
                                                                                  aggfunc=lambda x: np.nanpercentile(x,upperPercentile)),
-                                                     lowerPercentile=pd.NamedAgg(column=metric,
+                                                     lowerPercentile=pd.NamedAgg(column='value',
                                                                                  aggfunc=lambda x: np.nanpercentile(x, lowerPercentile)),
-                                                     nObvs = pd.NamedAgg(column=metric, 
+                                                     nObvs = pd.NamedAgg(column='value', 
                                                                            aggfunc='count'),
-                                                     firstQuartile = pd.NamedAgg(column=metric,
+                                                     firstQuartile = pd.NamedAgg(column='value',
                                                                                  aggfunc=lambda x: np.nanpercentile(x,25)),
-                                                     thirdQuartile= pd.NamedAgg(column=metric,
+                                                     thirdQuartile= pd.NamedAgg(column='value',
                                                                                  aggfunc=lambda x: np.nanpercentile(x,75)))
         
-        seMultd = seMultiplier*dfSummary["se"]
-        dfSummary["meanMinusSE"] = np.subtract(dfSummary["mean"], seMultd)
-        dfSummary["meanPlusSE"] = np.add(dfSummary["mean"], seMultd)
-        dfSummary["iqr"] = np.subtract(dfSummary['thirdQuartile'], dfSummary['firstQuartile'])
-        dfSummary["metric"] = metric
+        pctPwrGain = dfSummary.iloc[dfSummary.index.get_level_values('metric')=="percentPowerGain"]
+        chngPwrRatio = dfSummary.iloc[dfSummary.index.get_level_values('metric')=="changeInPowerRatio"]
         
-        dfSummary = dfSummary[["mean",'meanMinusSE','meanPlusSE', 
-                           'median', 'upperPercentile', 'lowerPercentile',
-                           'se', 'iqr','nObvs', 'metric']]
+        for df in [pctPwrGain, chngPwrRatio]:
+            seMultd = seMultiplier*df["se"]
+            df["meanMinusSE"] = np.subtract(df["mean"], seMultd)
+            df["meanPlusSE"] = np.add(df["mean"], seMultd)
+            df["iqr"] = np.subtract(df['thirdQuartile'], df['firstQuartile'])
+            # For convenience
+            df["nReps"] = B
+            df["metric"] = df.index.get_level_values('metric')
         
-        
+            df = df[["mean",'meanMinusSE','meanPlusSE',
+                    'median', 'lowerPercentile', 'upperPercentile',
+                    'se', 'iqr','nObvs', 'metric', 'nReps']]
+
+        pctPwrGain.index=pctPwrGain.index.droplevel('metric')
+        chngPwrRatio.index=chngPwrRatio.index.droplevel('metric')
         if diagnose:
             dfBinned = self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs)
             dfGrouped = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, False, False, df=dfBinned)
-            self.bootstrapDiagnostics(dfBinned,
-                                      dfSummary, 
-                                      bootstrapDFbinned, 
-                                      stepVars, 
-                                      windDirectionSpecs, 
-                                      windSpeedSpecs,
-                                      colors)
+            
+            for df in [pctPwrGain, chngPwrRatio]:
+                self.bootstrapDiagnostics(dfSummary=df,
+                                          dfBinned=dfBinned,
+                                          bootstrapDFBinnedList=bootstrapDFbinned,
+                                          stepVars=stepVars,
+                                          windDirectionSpecs=windDirectionSpecs,
+                                          windSpeedSpecs=windSpeedSpecs,
+                                          colors=['cmr.iceburn',
+                                                  'cubehelix',
+                                                  sns.color_palette("coolwarm_r", as_cmap=True), 
+                                                  'cubehelix'])
+
         
         duration = default_timer() - start
         print("Overall:", duration)
             
         if retainReps:
-            return {"summary": dfSummary, "reps":bootstrapDFs}
+            return {"percent power gain": pctPwrGain,
+                    "change in power  ratio": chngPwrRatio,
+                    "aep gain": aepSummary,
+                    "reps":bootstrapDFs}
             
         
-        return dfSummary
+        return {"percent power gain": pctPwrGain,
+                "change in power  ratio": chngPwrRatio,
+                "aep gain": aepSummary}
     
     
     def bootstrapDiagnostics(self, dfBinned, dfSummary,
@@ -838,7 +878,6 @@ class energyGain():
         
         metric= dfSummary['metric'].iloc[1]
         # 2d Histogram
-        
         ## Getting the data
         X1 = np.ndarray(0)
         Y1 = np.ndarray(0)
@@ -907,9 +946,8 @@ class energyGain():
         axs[0].set_title("Pooled Bootstrap Samples")
         fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})", fontsize=15) #unicode formatted
         fig.supylabel("Wind Speed (m/s)",fontsize=15)
-        fig.suptitle("Densities", fontsize=17)
+        fig.suptitle(f"Densities (nReps = {dfSummary['nReps'].iloc[1]}) ", fontsize=17)
         plt.show()
-
         # Heatmaps
         
         ## Getting the data
@@ -920,7 +958,7 @@ class energyGain():
                              ["Variance", "SE", "IQR"],
                              ["Interval Coverage", "SE Method", "Percentile Method"],
                              ["Confidence Interval Widths", "SE Method", "Percentile Method"]])
-
+        
         for speedIdx in range(speedEdges.size):
             for directIdx in range(directionEdges.size):
                 try:
@@ -940,14 +978,14 @@ class energyGain():
                         mPosNegCI[speedIdx, directIdx] = -1
                     elif dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['meanMinusSE']>0:
                         mPosNegCI[speedIdx, directIdx] = 1
-                    else:
+                    elif (dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['lowerPercentile'] != np.nan) and (dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['upperPercentile']!= np.nan):
                         mPosNegCI[speedIdx, directIdx] = 0
                         
                     if dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['upperPercentile']<0:
                         mPosNegPerc[speedIdx, directIdx] = -1
                     elif dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['lowerPercentile']>0:
                         mPosNegPerc[speedIdx, directIdx] = 1
-                    else:
+                    elif (dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['lowerPercentile'] != np.nan) and (dfSummary.loc[(directionEdges[directIdx],speedEdges[speedIdx])]['upperPercentile']!= np.nan):
                         mPosNegPerc[speedIdx, directIdx] = 0
                     
                     
@@ -973,7 +1011,7 @@ class energyGain():
                 ### Get data
                 M = mArray[plot][i]
                 
-                axs[i]=sns.heatmap(M,center=0, square=True, linewidths=0, 
+                axs[i]=sns.heatmap(M,center=0, square=False, linewidths=0, 
                                    ax=axs[i], cbar=bool(i), cbar_kws={"shrink": .8},
                                    annot=False, cmap=colors[plot], robust=True)
 
@@ -1004,7 +1042,7 @@ class energyGain():
             ### Labels
             fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})", fontsize=15) #unicode formatted
             fig.supylabel("Wind Speed (m/s)",fontsize=15)
-            fig.suptitle(f"{pArray[plot][0]} ({metric})", fontsize=17)
+            fig.suptitle(f"{pArray[plot][0]} ({metric}; nReps = {dfSummary['nReps'].iloc[1]})", fontsize=17)
             plt.show()
         
         
