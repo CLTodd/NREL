@@ -1,3 +1,8 @@
+# Private things
+models.py
+windTS
+windTSfull
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
