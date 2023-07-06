@@ -873,9 +873,33 @@ class energyGain():
                              bootstrapDFBinnedList, stepVars,
                              windDirectionSpecs, windSpeedSpecs,
                              colors=['turbo', 'turbo','turbo','turbo']):
-        # look at the distribution of the samples
-        # assuming 2d for now
+        # Check for other commonalities that can be moved here
         metric= dfSummary['metric'].iloc[1]
+        
+        if type(stepVars) is str:    
+            stepVars = list([stepVars])
+            
+        if len(stepVars)==2:
+            self.__bsDiagnostics2d__(metric,dfBinned,dfSummary,
+                                     bootstrapDFBinnedList, stepVars,
+                                     windDirectionSpecs, windSpeedSpecs,
+                                     colors)
+        else:#(if len(stepVars)==1)
+            self.__bsDiagnostics1d__(metric,dfBinned,dfSummary,
+                                     bootstrapDFBinnedList, stepVars,
+                                     windDirectionSpecs, windSpeedSpecs,
+                                     colors)
+        return None 
+    
+    def __bsDiagnostics1d__(self, metric, dfBinned, dfSummary,
+                             bootstrapDFBinnedList, stepVars, 
+                             windDirectionSpecs, windSpeedSpecs, colors):
+        # Deal with this later
+        return None
+    
+    def __bsDiagnostics2d__(self, metric, dfBinned, dfSummary,
+                             bootstrapDFBinnedList, stepVars,
+                             windDirectionSpecs, windSpeedSpecs, colors):
         # 2d Histogram
         ## Getting the data
         X1 = np.ndarray(0)
@@ -1027,14 +1051,10 @@ class energyGain():
                 
                 axs[i].grid(which='minor', visible=True, color='#d9d9d9',linestyle='-',
                         linewidth=1)
-                
-                #axs[0].set_xlabel("Direction", fontsize=12)
-                #axs[0].set_ylabel("Speed", fontsize=12)
+
                 axs[i].set_title(pArray[plot][i+1], fontsize=13)                          
 
 
-            #fig.axes_all[0].set_title(pArray[plot][1], fontsize=15)
-            #fig.axes_all[1].set_title(pArray[plot][2], fontsize=15)
             axs[1].tick_params(which="minor", bottom=True, length=0, color='white')
             
             ### Labels
@@ -1042,9 +1062,7 @@ class energyGain():
             fig.supylabel("Wind Speed (m/s)",fontsize=15)
             fig.suptitle(f"{pArray[plot][0]} ({metric}; nReps = {dfSummary['nReps'].iloc[1]})", fontsize=17)
             plt.show()
-        
-        
-        return None 
+        return None
     
     # Seems inefficient 
     def lineplotBE(self, dfSummary=None, repsArray=None, windDirectionSpecs=None, windSpeedSpecs=None, 
