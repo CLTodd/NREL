@@ -875,7 +875,6 @@ class energyGain():
                              colors=['turbo', 'turbo','turbo','turbo']):
         # look at the distribution of the samples
         # assuming 2d for now
-        
         metric= dfSummary['metric'].iloc[1]
         # 2d Histogram
         ## Getting the data
@@ -942,16 +941,15 @@ class energyGain():
             ax.set_ylabel("", fontsize=0)
         
         ### Labels
-        axs[1].set_title("Real Data")
-        axs[0].set_title("Pooled Bootstrap Samples")
+        axs[1].set_title(f"Real Data (obvs={self.df.shape[0]})")
+        axs[0].set_title(f"Pooled Bootstrap Samples (size={self.df.shape[0]}; nReps = {dfSummary['nReps'].iloc[1]})")
         fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})", fontsize=15) #unicode formatted
         fig.supylabel("Wind Speed (m/s)",fontsize=15)
-        fig.suptitle(f"Densities (nReps = {dfSummary['nReps'].iloc[1]}) ", fontsize=17)
+        fig.suptitle("Densities ", fontsize=17)
         plt.show()
         # Heatmaps
         
         ## Getting the data
-        #mVarSE,mVarIQR,mIWperc,mIWci,mCenterMean,mCenterMed,mPosNegCI, mPosNegPerc = [np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float) for i in range(8)]
         mCenterMean,mCenterMed,mVarSE,mVarIQR, mPosNegCI, mPosNegPerc,mIWperc,mIWci = [np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float) for i in range(8)]
         ## 4 types of plots: Centers, variance, CI width, and CI sign )pos/neg)
         pArray = np.asarray([["Centers", "Mean","Median"],
@@ -1114,76 +1112,4 @@ class energyGain():
         fig.suptitle(title, fontsize=17)
         plt.show()
         
-        
-        
-            
-            
-        
-        
         return None    
- 
-    
-    # Change this name later
-    # pct power gain only right now
-    # This does NOT work, the scatterplot and line plot do not line up
-    def plot(self, windDirectionSpecs=[0,360,1], windSpeedSpecs=[0,20,1], 
-             x=None, y=None, xErr=None, yErr=None):
-        """
-        windDirectionSpecs: list of length 3, specifications for wind direction
-            bins-- [lower bound (inclusive), upper bound (exclusive), bin width]
-        windSpeedSpecs: list of length 3, specifications for wind speed bins--
-            [lower bound (inclusive), upper bound (exclusive), bin width]
-        """
-        
-        # If all data is missing, calculate some default
-        if (x is None) and (y is None):
-            resultDict = self.compute1D(self.percentPowerGain, windDirectionSpecs[0:2],
-                                        windSpeedSpecs[0:2], by=windDirectionSpecs[2],)
-            x = resultDict['x']
-            y = resultDict['y']
-            #title = "Percent Power Gain"
-        elif (x is None) or (y is None):
-            # If only one is missing, that means someone oopsied
-            sillyGoose = "Didn't provide all data."
-            return print(sillyGoose)
-        
-        fig, ax = plt.subplots()
-        
-        #ax.scatter(x,y)
-        
-        # # Labels
-        # ax.set_title(title)
-        # ax.set_xlabel(u"Wind Direction (\N{DEGREE SIGN})") #unicode formatted
-        # ax.set_ylabel("Wind Speed (m/s)")
-        
-        ax.scatter(x=x,y=y, c="blue")
-        ax.plot(x,y)
-        
-        ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
-        ax.yaxis.set_major_locator(mticker.MultipleLocator(0.01))
-        ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
-        ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.005))
-        
-        ax.grid(visible=True, which="major")
-        
-        ax.scatter(x=x,y=y, c="red")
-        #ax.plot(x,y)
-        
-        if (xErr is not None) and (yErr is not None):
-            ax.errorbar(x=x, y=y,xerr=xErr, yerr=yErr, capsize=5, c="green")
-        
-        plt.show()
-        
-        return None
-    
-
-  
-# Removing this later
-# df_scada = pd.read_feather("C:/Users/ctodd/Documents/GitHub/flasc/examples_smarteole/postprocessed/df_scada_data_60s_filtered_and_northing_calibrated.ftr")
-# FI = load_smarteole_floris(wake_model="C:/Users/ctodd/Documents/GitHub/floris/examples/inputs/gch.yaml", wd_std=0.0)
-# dfUpstream = ftools.get_upstream_turbs_floris(FI)
-# testTurbines = [4,5]
-# referenceTurbines = [0,1,2,6]
-# df_scadaNoNan = df_scada.dropna(subset=[f'pow_{i:03d}' for i in testTurbines+referenceTurbines])
-# thing = energyGain(df_scadaNoNan, dfUpstream, testTurbines, referenceTurbines,wdCol="wd_smarteole", wsCol="ws_smarteole")
-# thing.plot([190,250,5],[0,20,1]) 
