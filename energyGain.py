@@ -378,7 +378,7 @@ class energyGain():
         if df is None:
             df = self.df.copy()
         
-        # Filter for conditions out of the bound of interest
+        # Bin assignment doesn't work correctly for conditons outside these bounds 
         df = df.loc[(df[self.wdCol]>=windDirectionSpecs[0]) & (df[self.wdCol]<windDirectionSpecs[1]) &
                 (df[self.wsCol]>=windSpeedSpecs[0]) & (df[self.wsCol]<windSpeedSpecs[1])]
         
@@ -398,7 +398,8 @@ class energyGain():
              
     def binAll(self, stepVars = ["direction", "speed"], windDirectionSpecs=None,
                windSpeedSpecs=None, retainControlMode=True, 
-               retainTurbineLabel=True,  returnWide=True, df=None, group=True):
+               retainTurbineLabel=True,  returnWide=True, df=None, group=True,
+               filterBins=True):
         """
         windDirectionSpecs: list of length 3 or 2, specifications for wind direction
             bins-- [lower bound (inclusive), upper bound (exclusive), bin width].
@@ -424,6 +425,11 @@ class energyGain():
             df = self.binAdder(windDirectionSpecs=windDirectionSpecs,
                                windSpeedSpecs=windSpeedSpecs,
                                stepVars=stepVars)
+        
+        if filterBins:
+            # Filter for conditions out of the bound of interest
+            df = df.loc[(df[self.wdCol]>=windDirectionSpecs[0]) & (df[self.wdCol]<windDirectionSpecs[1]) &
+                (df[self.wsCol]>=windSpeedSpecs[0]) & (df[self.wsCol]<windSpeedSpecs[1])]
         
         # Exclude undesirable turbines
         stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
@@ -511,6 +517,8 @@ class energyGain():
                              windDirectionSpecs=windDirectionSpecs,
                              windSpeedSpecs=windSpeedSpecs,
                              df=df)
+            
+        
         # Sometimes the order of the labels in this tuple seem to change and I haven't figured out why. This should fix the order.
         df = df.reorder_levels([None, "turbineLabel", "control_mode"], axis=1)
                           
@@ -698,11 +706,11 @@ class energyGain():
         if windSpeedSpecs is None:
             windSpeedSpecs = self.defaultWindSpeedSpecs
             
-            
-        start = default_timer()
         
         if type(stepVars) is str:    
             stepVars = list([stepVars])
+        
+        start = default_timer()
         
         # Get an array of the bootstrap samples
         if repsArray is None:
@@ -721,18 +729,22 @@ class energyGain():
             finalCols.append(name)
             finalColsMultiIdx.append((name,'',''))
         
-        bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
+        # Setup empty array to hold the binned versions of each bootstrap simulation
+       # bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
         
         for bootstrap in range(B):
+            
+            
+            # Get current bootstrap sample
             currentDF = bootstrapDFs[bootstrap]
             
             # get into correct format
             binadder =self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs, df=currentDF)
-            binall = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, df=binadder)
-            
+            binall = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, df=binadder, filterBins=True)
             computeall = self.computeAll(stepVars, windDirectionSpecs,
                                          windSpeedSpecs, useReference, df=binall)
-            bootstrapDFbinned[bootstrap] = binadder
+            
+            #bootstrapDFbinned[bootstrap] = binadder
             
             binStats = computeall[finalColsMultiIdx]
             # Multi-index on the columns makes indexing annoying when all but one level is empty
@@ -800,7 +812,7 @@ class energyGain():
         ppgSamplingDists = metricDF.copy().drop(columns='changeInPowerRatio', inplace=False)
         cprSamplingDists = metricDF.copy().drop(columns='percentPowerGain', inplace=False)
         
-        # Compute Sampling distribution statistics for each wind condition bin
+        # Compute Sample statistics for each wind condition bin
         metricDFlong = metricDF.melt(value_vars=['percentPowerGain', 'changeInPowerRatio'],
                                      value_name='value',
                                      var_name='metric',
@@ -842,36 +854,32 @@ class energyGain():
 
         pctPwrGain.index=pctPwrGain.index.droplevel('metric')
         chngPwrRatio.index=chngPwrRatio.index.droplevel('metric')
-        if diagnose:
-            dfBinned = self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs)
-            dfGrouped = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, False, False, df=dfBinned)
-            
-            for df in [pctPwrGain, chngPwrRatio]:
-                self.bootstrapDiagnostics(dfSummary=df,
-                                          dfBinned=dfBinned,
-                                          bootstrapDFBinnedList=bootstrapDFbinned,
-                                          stepVars=stepVars,
-                                          windDirectionSpecs=windDirectionSpecs,
-                                          windSpeedSpecs=windSpeedSpecs,
-                                          colors=['cmr.iceburn',
-                                                  'cubehelix',
-                                                  sns.color_palette("coolwarm_r", 
-                                                                    as_cmap=True),
-                                                  'cubehelix'])
-
         
-        duration = default_timer() - start
-        print("Overall:", duration)
-        breakpoint()
         resultDict = {"percent power gain": pctPwrGain,
                 "change in power ratio": chngPwrRatio,
                 "aep gain": aepSummary,
                 'ppg sampling distributions': ppgSamplingDists,
                 'cpr sampling distributions':cprSamplingDists,
-                'aep sampling distribution': aepSamplingDist}
+                'aep sampling distribution': aepSamplingDist,}
         
         if retainReps:
             resultDict['reps'] = bootstrapDFs
+        
+        duration = default_timer() - start
+        print("Overall:", duration)
+        
+        if diagnose:
+            dfBinned = self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs)
+            
+            self.bootstrapDiagnostics(bsEstimateDict=resultDict,
+                                      dfBinned=dfBinned,
+                                      windDirectionSpecs=windDirectionSpecs,
+                                      windSpeedSpecs=windSpeedSpecs,
+                                      colors=['cmr.iceburn',
+                                              'cubehelix',
+                                              sns.color_palette("coolwarm_r",
+                                                                as_cmap=True),
+                                              'cubehelix'])
             
         return resultDict
     
@@ -892,6 +900,8 @@ class energyGain():
                                      windDirectionSpecs=windDirectionSpecs,
                                      windSpeedSpecs=windSpeedSpecs,
                                      colors=colors)
+            
+
         return None 
     
     def __bsDiagnostics1d__(self,bsEstimateDict,
@@ -911,7 +921,7 @@ class energyGain():
             
         stepVar = stepVar[0]
             
-        if stepVar=='direction':
+        if stepVar=='directionBinLowerBound':
             width=windDirectionSpecs[2]
             edges = np.arange(*windDirectionSpecs)
             xLabel = u"Wind Direction (\N{DEGREE SIGN})"    
@@ -921,6 +931,8 @@ class energyGain():
             xLabel = "Wind Speed (m/s)"
         
         # Get Data
+        # This still needsto be added, the below is wrong
+        
         
         # Histograms
         plt.clf()
@@ -931,12 +943,12 @@ class energyGain():
                                 layout='constrained')
         
          
-        h1 = sns.histplot(dfBinned, x=f'{stepVar}BinLowerBound',
-                           cbar=True, stat='density', thresh=None,
+        h1 = sns.histplot(dfBinned, x=stepVar,
+                          stat='density', thresh=None,
                            binwidth = width, ax=axs[1], linewidth=1)
-               
-        h0 = sns.histplot(x=ppgSamplingDists[f"{stepVar}BinLowerBound"],
-                          stat='density',thresh=None,
+        breakpoint()
+        h0 = sns.histplot(x=ppgSamplingDists[stepVar],
+                          stat='density', thresh=None,
                            binwidth=width, ax=axs[0], linewidth=1)
          
 
@@ -976,7 +988,7 @@ class energyGain():
     
     def __bsDiagnostics2d__(self, bsEstimateDict,
                             dfBinned,
-                              stepVars,
+                            stepVars,
                              windDirectionSpecs, windSpeedSpecs, colors):
         
         ppgSamplingDists = bsEstimateDict['ppg sampling distributions']
