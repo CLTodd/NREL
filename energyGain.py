@@ -676,7 +676,7 @@ class energyGain():
             duration = default_timer() - start
             print("Sampling Time:", duration)
         
-            dfPooled['repID'] = np.repeat(np.arange(0,B,1), repeats=nrow)
+            dfPooled['repID'] = np.repeat(np.arange(0,B,1, dtype=int), repeats=nrow)
             return dfPooled
         
         else:
@@ -700,7 +700,7 @@ class energyGain():
                           windDirectionSpecs=None, windSpeedSpecs=None,
                           B=1000, seed=None, useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
-                          retainReps = False, diagnose=True, repsPooled=None,
+                          retainReps = True, diagnose=True, repsPooled=None,
                           **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
@@ -728,10 +728,10 @@ class energyGain():
         
         # Get an array of the bootstrap samples
         if repsPooled is None:
-            bootstrapDFs = self.bootstrapSamples(B=B, seed=seed)
+            bootstrapPooled = self.bootstrapSamples(B=B, seed=seed, pooled=True)
         else:
-            bootstrapDFs = repsArray
-            B = bootstrapDFs.size
+            bootstrapDFs = repsPooled
+            B = bootstrapDFs[['repID']].iloc[-1][0]
 
         
         finalCols = ['percentPowerGain', 'changeInPowerRatio']
@@ -747,18 +747,15 @@ class energyGain():
        # bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
         
         for bootstrap in range(B):
-            
-            
+
             # Get current bootstrap sample
-            currentDF = bootstrapDFs[bootstrap]
+            currentDF = bootstrapDFs.loc[bootstrapDFs['repID']==bootstrap]
             
             # get into correct format
             binadder =self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs, df=currentDF)
             binall = self.binAll(stepVars, windDirectionSpecs, windSpeedSpecs, df=binadder, filterBins=True)
             computeall = self.computeAll(stepVars, windDirectionSpecs,
                                          windSpeedSpecs, useReference, df=binall)
-            
-            #bootstrapDFbinned[bootstrap] = binadder
             
             binStats = computeall[finalColsMultiIdx]
             # Multi-index on the columns makes indexing annoying when all but one level is empty
@@ -791,7 +788,6 @@ class energyGain():
             
         aepSamplingDist = pd.DataFrame(data=aepMatrix, columns = ["aepMethod","absoluteAEP", "useReference","aepGain"])
         
-        #for metric in ("percentPowerGain", "change")
         
         aepSummary = aepSamplingDist.groupby(by=["aepMethod","absoluteAEP", "useReference"]).agg(mean=pd.NamedAgg(column="aepGain",
                                                                       aggfunc=np.mean),
