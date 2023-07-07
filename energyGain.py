@@ -18,6 +18,7 @@ import re
 from flasc.dataframe_operations import dataframe_manipulations as dfm
 import pandas as pd
 
+pd.options.mode.chained_assignment = None
 
 
 class energyGain():
@@ -383,12 +384,12 @@ class energyGain():
                 (df[self.wsCol]>=windSpeedSpecs[0]) & (df[self.wsCol]<windSpeedSpecs[1])]
         
         # Calculating the bins
-        pd.options.mode.chained_assignment = None
+        
         if "direction" in stepVars:
             df["directionBinLowerBound"] = (((df[self.wdCol]-windDirectionSpecs[0])//windDirectionSpecs[2])*windDirectionSpecs[2])+windDirectionSpecs[0]
         if "speed" in stepVars:
             df["speedBinLowerBound"] = (((df[self.wsCol]-windSpeedSpecs[0])//windSpeedSpecs[2])*windSpeedSpecs[2])+windSpeedSpecs[0]
-        pd.options.mode.chained_assignment = 'warn'
+        
         # Update self.df if desired
         if not copy:
             self.df = df
@@ -666,17 +667,18 @@ class energyGain():
         prng = np.random.default_rng(seed=seed)
         
         nrow = self.df.shape[0]
-        
+         
         if pooled:
             dfPooled= self.df.sample(n=nrow*B,
                                 replace=True,
                                 random_state=prng)
-            dfPooled.reset_index(drop=True,inplace=True)
+            dfPooled = dfPooled.reset_index(drop=True)
         
             duration = default_timer() - start
             print("Sampling Time:", duration)
         
             dfPooled['repID'] = np.repeat(np.arange(0,B,1, dtype=int), repeats=nrow)
+             
             return dfPooled
         
         else:
@@ -728,10 +730,12 @@ class energyGain():
         
         # Get an array of the bootstrap samples
         if repsPooled is None:
+             
             bootstrapPooled = self.bootstrapSamples(B=B, seed=seed, pooled=True)
+             
         else:
-            bootstrapDFs = repsPooled
-            B = bootstrapDFs[['repID']].iloc[-1][0]
+            bootstrapPooled = repsPooled
+            B = bootstrapPooled[['repID']].iloc[-1][0]
 
         
         finalCols = ['percentPowerGain', 'changeInPowerRatio']
@@ -746,10 +750,14 @@ class energyGain():
         # Setup empty array to hold the binned versions of each bootstrap simulation
        # bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
         
+        nrow = self.df.shape[0]
+        rowidx = np.arange(0,(nrow*B)+1,nrow)
         for bootstrap in range(B):
-
+            
             # Get current bootstrap sample
-            currentDF = bootstrapDFs.loc[bootstrapDFs['repID']==bootstrap]
+            startIDX = rowidx[bootstrap]
+            stopIDX = rowidx[bootstrap+1]
+            currentDF = bootstrapPooled.iloc[startIDX:stopIDX,:]
             
             # get into correct format
             binadder =self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs, df=currentDF)
@@ -845,7 +853,7 @@ class energyGain():
                                                                                  aggfunc=lambda x: np.nanpercentile(x,25)),
                                                      thirdQuartile= pd.NamedAgg(column='value',
                                                                                  aggfunc=lambda x: np.nanpercentile(x,75)))
-        
+
         pctPwrGain = dfSummary.iloc[dfSummary.index.get_level_values('metric')=="percentPowerGain"]
         chngPwrRatio = dfSummary.iloc[dfSummary.index.get_level_values('metric')=="changeInPowerRatio"]
         
@@ -865,18 +873,16 @@ class energyGain():
         pctPwrGain.index=pctPwrGain.index.droplevel('metric')
         chngPwrRatio.index=chngPwrRatio.index.droplevel('metric')
         
+        duration = default_timer() - start
+        print("Overall:", duration)
+        
         resultDict = {"percent power gain": pctPwrGain,
                 "change in power ratio": chngPwrRatio,
                 "aep gain": aepSummary,
                 'ppg sampling distributions': ppgSamplingDists,
                 'cpr sampling distributions':cprSamplingDists,
-                'aep sampling distribution': aepSamplingDist,}
-        
-        if retainReps:
-            resultDict['reps'] = bootstrapDFs
-        
-        duration = default_timer() - start
-        print("Overall:", duration)
+                'aep sampling distribution': aepSamplingDist,
+                'reps' : bootstrapPooled}
         
         if diagnose:
             dfBinned = self.binAdder(stepVars, windDirectionSpecs, windSpeedSpecs)
@@ -891,21 +897,30 @@ class energyGain():
                                                                 as_cmap=True),
                                               'cubehelix'])
             
+        if not retainReps:
+            resultDict.pop['reps']
+            return resultDict
         return resultDict
     
     def bootstrapDiagnostics(self, bsEstimateDict, dfBinned,
                              windDirectionSpecs=None, windSpeedSpecs=None,
                              colors=['turbo', 'turbo','turbo','turbo']):
         # Check for other commonalities that can be moved here
+       
         stepVars = []
         for var in bsEstimateDict['percent power gain'].index.names:
             stepVars.append(var)     
             
         if len(stepVars)==2:
-            self.__bsDiagnostics2d__(bsEstimateDict=bsEstimateDict)
+            self.__bsDiagnostics2d__(bsEstimateDict=bsEstimateDict,
+                                     dfBinned=dfBinned,
+                                     stepVars=stepVars,
+                                     windDirectionSpecs=windDirectionSpecs,
+                                     windSpeedSpecs=windSpeedSpecs,
+                                     colors=colors)
         else:#(if len(stepVars)==1)
             self.__bsDiagnostics1d__(bsEstimateDict=bsEstimateDict,
-                                     stepVar=stepVars, 
+                                     stepVar=stepVars,
                                      dfBinned=dfBinned,
                                      windDirectionSpecs=windDirectionSpecs,
                                      windSpeedSpecs=windSpeedSpecs,
@@ -915,7 +930,7 @@ class energyGain():
         return None 
     
     def __bsDiagnostics1d__(self,bsEstimateDict,
-                            dfBinned,
+                            dfBinned,bootstrapPooled,
                             stepVar,
                             windDirectionSpecs=None, windSpeedSpecs=None, 
                             colors=['turbo', 'turbo','turbo','turbo']):
@@ -956,7 +971,7 @@ class energyGain():
         h1 = sns.histplot(dfBinned, x=stepVar,
                           stat='density', thresh=None,
                            binwidth = width, ax=axs[1], linewidth=1)
-        breakpoint()
+
         h0 = sns.histplot(x=ppgSamplingDists[stepVar],
                           stat='density', thresh=None,
                            binwidth=width, ax=axs[0], linewidth=1)
@@ -1000,13 +1015,14 @@ class energyGain():
                             dfBinned,
                             stepVars,
                              windDirectionSpecs, windSpeedSpecs, colors):
-        
+        breakpoint()#####
         ppgSamplingDists = bsEstimateDict['ppg sampling distributions']
         
         ppgSummary = bsEstimateDict['percent power gain']
-        cprSummary = bsEstimateDict['cpr sampling distributions']
+        cprSummary = bsEstimateDict['change in power ratio']
         aepSummary = bsEstimateDict['aep gain']
         
+        bsPooled = bsEstimateDict['reps']
         
         
         # 2d Histogram
@@ -1015,7 +1031,7 @@ class energyGain():
         speedEdges = np.arange(*windSpeedSpecs)
         
     
-        
+        breakpoint()#####
         ## Plotting   
         fig, axs = plt.subplots(nrows=1, ncols=2, 
                                 sharex=True, sharey=True, 
@@ -1023,32 +1039,25 @@ class energyGain():
         ### Histograms
         width = np.min(np.asarray([windDirectionSpecs[2], windSpeedSpecs[2]]))
         
-        h0 = sns.histplot(dfBinned,
-                          x='directionBinLowerBound', y='speedBinLowerBound',
-                          cbar=True, stat='density', thresh=None,
-                          binwidth = width, ax=axs[1], linewidth=1,
-                          cmap=sns.color_palette("rocket_r", as_cmap=True))
+        
+        
+        h1=sns.histplot(self.df, x=self.wdCol, y=self.wsCol,
+                      cbar=True, stat='density', thresh=None,
+                      binwidth = width, ax=axs[1], linewidth=1,
+                      cmap=sns.color_palette("rocket_r", as_cmap=True))
+        
+        h0=sns.histplot(bsPooled, x=self.wdCol, y=self.wsCol,
+                      cbar=True, stat='density', thresh=None,
+                      binwidth = width, ax=axs[0], linewidth=1,
+                      cmap=sns.color_palette("rocket_r", as_cmap=True))
+        
+        for i in range(2):
+            axs[i].tick_params(which="major", bottom=True, length=5)
+            axs[i].tick_params(which="minor", bottom=True, length=3, labelsize=0)
+            axs[i].set_xlabel("", fontsize=0)
+            axs[i].set_ylabel("", fontsize=0)
               
-        h1 = sns.histplot(ppgSamplingDists,
-                          x='directionBinLowerBound',
-                          y='speedBinLowerBound', stat='density',thresh=None,
-                          binwidth=width, ax=axs[0], linewidth=1,
-                          cmap=sns.color_palette("rocket_r", as_cmap=True))
         
-        
-        
-        
-        
-        ### Tick marks at multiples of 5 and 1
-        for ax in axs:
-            ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
-            ax.yaxis.set_major_locator(mticker.MultipleLocator(5))
-            ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
-            ax.yaxis.set_minor_locator(mticker.MultipleLocator(1))
-            ax.tick_params(which="major", bottom=True, length=5)
-            ax.tick_params(which="minor", bottom=True, length=3)
-            ax.set_xlabel("", fontsize=0)
-            ax.set_ylabel("", fontsize=0)
         
         ### Labels
         axs[1].set_title(f"Real Data (size={self.df.shape[0]})")
@@ -1083,13 +1092,19 @@ class energyGain():
                              ["Confidence Interval Widths", "SE Method", "Percentile Method"]])
         
         idxs = [(iS,iD) for iS in range(speedEdges.size) for iD in range(directionEdges.size)]
+        breakpoint()#############
         
+        start1096 = default_timer()
         for dfSummary in [ppgSummary, cprSummary]:
-        
+            print("Doing stuff for new metric") 
             mCenterMean,mCenterMed,mVarSE,mVarIQR, mPosNegCI, mPosNegPerc,mIWperc,mIWci = [np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float) for i in range(8)]
             ### Just in case indices are out of order
-            dfSummary.index = dfSummary.index.reorder_levels(order=['directionBinLowerBound','speedBinLowerBound'])
-        
+            try:
+                dfSummary.index = dfSummary.index.reorder_levels(order=['directionBinLowerBound','speedBinLowerBound'])
+            except AttributeError:
+                breakpoint()
+            print("filling matrices")
+            start1105 = default_timer()
             for idx in idxs:
                 try:
                     mVarSE[idx[0], idx[1]] = dfSummary.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['se']
@@ -1108,7 +1123,7 @@ class energyGain():
                         mPosNegCI[idx[0], idx[1]] = -1
                     elif dfSummary.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['meanMinusSE']>0:
                         mPosNegCI[idx[0], idx[1]] = 1
-                    elif dfSummary.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['lowerPercentile']*dfSummary.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['upperPercentile']<0:
+                    elif dfSummary.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['meanMinusSE']*dfSummary.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['meanPlusSE']<0:
                         mPosNegCI[idx[0], idx[1]] = 0
                         
                     if dfSummary.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['upperPercentile']<0:
@@ -1121,16 +1136,21 @@ class energyGain():
                     
                 except KeyError:
                     continue
-        
+            duration1105 = default_timer() - start1105
+            print("Done filling matrices:", duration1105)
+            
             mArray = np.asarray([[mCenterMean,mCenterMed], 
                              [mVarSE,mVarIQR],
                              [mPosNegCI, mPosNegPerc],
                              [mIWperc,mIWci]])
         
             ## Plotting
-
+            
+            
             ### Set up the plotting field
             for plot in range(pArray.shape[0]):
+                start1152 = default_timer()
+                print('starting new plot')
                 plt.clf()
                 fig, axs = plt.subplots(nrows=1, ncols=2,
                                     sharex=True, sharey=True, 
@@ -1171,6 +1191,13 @@ class energyGain():
                 fig.suptitle(f"{pArray[plot][0]} ({dfSummary['metric'].iloc[1]}; nReps = {dfSummary['nReps'].iloc[1]})", fontsize=17)
                 plt.show()
                 
+                duration1152 = default_timer() - start1152
+                print("Moving on to next plot", duration1152)
+                
+        
+            duration1096 = default_timer() - start1096
+            print("Moving on to next metric", duration1096)      
+        
         return None
     
     # Seems inefficient 
