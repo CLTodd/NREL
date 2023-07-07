@@ -657,7 +657,7 @@ class energyGain():
         #print(aep)
         return (df, aep)
     
-    def bootstrapSamples(self, B=1000, seed=None):
+    def bootstrapSamples(self, B=1000, seed=None, pooled=True):
         
         start = default_timer()
         samples = np.full(B, None, dtype=pd.core.frame.DataFrame)
@@ -666,18 +666,32 @@ class energyGain():
         prng = np.random.default_rng(seed=seed)
         
         nrow = self.df.shape[0]
-        for rep in range(B):
-            prng.random()
-            dfTemp = self.df.sample(n=nrow,
+        
+        if pooled:
+            dfPooled= self.df.sample(n=nrow*B,
+                                replace=True,
+                                random_state=prng)
+            dfPooled.reset_index(drop=True,inplace=True)
+        
+            duration = default_timer() - start
+            print("Sampling Time:", duration)
+        
+            dfPooled['repID'] = np.repeat(np.arange(0,B,1), repeats=nrow)
+            return dfPooled
+        
+        else:
+            samples = np.full(B, None, dtype=pd.core.frame.DataFrame)
+            for rep in range(B):
+                dfTemp = self.df.sample(n=nrow,
                                     replace=True,
                                     random_state=prng)
-            
-            dfTemp.reset_index(drop=True,inplace=True)
-            samples[rep] = dfTemp
+                dfTemp.reset_index(drop=True,inplace=True)
+                samples[rep] = dfTemp
                                                                    
         
         duration = default_timer() - start
         print("Sampling Time:", duration)
+            
         
         return samples
      
@@ -686,7 +700,7 @@ class energyGain():
                           windDirectionSpecs=None, windSpeedSpecs=None,
                           B=1000, seed=None, useReference=True,
                           seMultiplier=2, lowerPercentile=2.5, upperPercentile=97.5,
-                          retainReps = False, diagnose=True, repsArray=None,
+                          retainReps = False, diagnose=True, repsPooled=None,
                           **AEPargs):# figure out how to use kwargs here for hours, aepmethod, and absolute, etc. for metricMethod
         """
         Compute summary statistics of bootsrapped samples based on your metric of choice
@@ -713,7 +727,7 @@ class energyGain():
         start = default_timer()
         
         # Get an array of the bootstrap samples
-        if repsArray is None:
+        if repsPooled is None:
             bootstrapDFs = self.bootstrapSamples(B=B, seed=seed)
         else:
             bootstrapDFs = repsArray
