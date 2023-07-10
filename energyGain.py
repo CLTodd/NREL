@@ -4,8 +4,7 @@ Created on Fri Jun  9 13:03:40 2023
 
 @author: ctodd
 """
-
-#import pdb
+import re
 import matplotlib.pyplot as plt
 import matplotlib.colors as mplc
 import matplotlib.ticker as mticker
@@ -14,57 +13,84 @@ import numpy as np
 import seaborn as sns
 import cmasher as cmr 
 from timeit import default_timer
-import re
-from flasc.dataframe_operations import dataframe_manipulations as dfm
 import pandas as pd
-
+from flasc.dataframe_operations import dataframe_manipulations as dfm
+from wind_timeseries_processing import pmf_albaincourt
 pd.options.mode.chained_assignment = None
 
+
+# For the smarteole experiment #
 
 class energyGain():
     
     
     def __init__(self, df, dfUpstream, testTurbines=[], refTurbines=[],
-                 wdCol=None, wsCol=None, 
+                 wdCol=None, wsCol=None, pmf=None,
                  defaultWindDirectionSpecs = [0,360,1],
                  defaultWindSpeedSpecs=[0,20,1], useReference=True):
         """
-        testTurbines: list, turbine numbers to be considered test turbines
-        refTurbines: list, turbine numbers to be considered reference turbines
-        wdCol: string, name of the column in df to use for reference wind direction
-            Calculates a column named "wd" if None
-        wsCol: string, name of the column in df to use for reference wind speed
-            Calculates a column named "ws" if None
-        useReference: Boolean, wheter to compare Test turbines to Reference 
-            turbines (True) or Test turbines to themselves in control mode
-            versus baseline mode (False).
+        Parameters
+        ----------
+        df : pandas dataframe
+            formatted as in flasc example
+        dfUpstream : pandas dataframe
+            output from ftools.get_upstream_turbs_floris, data frame listing which turbines are upstream for each wind speed and direction
+        testTurbines : list of integers
+            Turbine numbers to be considered test turbines, based on 3-digit turbine numbering convention starting at 0 but without the leading zeroes
+        refTurbines : list of integers
+            Turbine numbers to be considered reference turbines, based on 3-digit turbine numbering convention starting at 0 but without the leading zeroes
+        wdCol : string
+            Name of the column in df that you want to use as the 'true' wind direction.
+            Defaults to 'wd' (the column output by other FLASC functionality)
+        wsCol : string
+            Name of the column in df that you want to use as the 'true' wind direction.
+            Defaults to 'ws' (the column output by other FLASC functionality)
+        defaultWindDirectionSpecs : list of floats with length 3, optional
+            Specifications for the sector of wind directions you are interested in -- [lower bound (inclusive), upper bound (exclusive), bin width]. 
+            These specifications will only be used to construct wind condition bins within various methods if conditions are specified in the call.
+            The default is [0,20,1].
+        defaultWindSpeedSpecs : list of floats with length 3, optional
+            Specifications for the range of wind speeds you are interested in -- [lower bound (inclusive), upper bound (exclusive), bin width]. 
+            These specifications will only be used to construct wind condition bins within various methods if conditions are specified in the call.
+            The default is [0,20,1].
+        useReference : boolean, optional
+            Whether to use reference turbines for various energy uplift calculations. 
+            This will only be used if a method is called without specifying useReference in the call.
+            The default is True.
+
+        Returns
+        -------
+        None.
+
         """
-        
+        # Object attributes
         self.df = df
-        self.dfLong=None
         self.dfUpstream = dfUpstream
         self.testTurbines = testTurbines
         self.referenceTurbines = refTurbines
-        self.wdCol = wdCol
-        self.wsCol = wsCol
-        self.useReference = useReference
         
-        # Set defaults
+        # Defaults for various calculations
         self.defaultWindDirectionSpecs = defaultWindDirectionSpecs
         self.defaultWindSpeedSpecs = defaultWindSpeedSpecs
+        self.useReference = useReference
+        self.wdCol = wdCol
+        self.wsCol = wsCol
+        self.pmf=pmf
         
-        # Set the columns to be referenced for wind speed and direction if not given   
         if self.wdCol == None:
             self.setWD() 
         if self.wsCol==None:
             self.setWS()
         
         # I don't rember why I did this
+        # Other things that might be useful
+        self.dfLong=None
         if df is not None:
             self.__dfLonger__()
             self.allTurbines = [int(re.sub("\D+","",colname)) for colname in list(df) if re.match('^pow_\d+', colname)]
         else:
             self.allTurbines = None
+            
             
 
     def setWS(self, colname=None):
@@ -549,9 +575,16 @@ class energyGain():
                                                              df[('numObvs', 'reference', 'baseline')])),
                                            axis=2)[0]
         
+        #breakpoint()
         # Same for both AEP methods
-        N = np.nansum(df["totalNumObvs"])
-        df["freq"] = df["totalNumObvs"]/N
+        if self.pmf is None:
+            N = np.nansum(df["totalNumObvs"])
+            df["freq"] = df["totalNumObvs"]/N
+        else:
+            df["freq"] = self.pmf(df)
+            
+            
+            
         df["changeInPowerRatio"] = np.subtract(df['powerRatioControl'],
                                            df['powerRatioBaseline'])
         
@@ -930,13 +963,14 @@ class energyGain():
         return None 
     
     def __bsDiagnostics1d__(self,bsEstimateDict,
-                            dfBinned,bootstrapPooled,
+                            dfBinned,
                             stepVar,
                             windDirectionSpecs=None, windSpeedSpecs=None, 
                             colors=['turbo', 'turbo','turbo','turbo']):
         
         ppgSamplingDists = bsEstimateDict['ppg sampling distributions']
         ppgSummary = bsEstimateDict["percent power gain"]
+        bsPooled = bsEstimateDict['reps']
         
         if windDirectionSpecs is None:
             windDirectionSpecs = self.defaultWindDirectionSpecs
@@ -949,40 +983,39 @@ class energyGain():
         if stepVar=='directionBinLowerBound':
             width=windDirectionSpecs[2]
             edges = np.arange(*windDirectionSpecs)
-            xLabel = u"Wind Direction (\N{DEGREE SIGN})"    
+            xLabel = u"Wind Direction (\N{DEGREE SIGN})"
+            col = self.wdCol
         else:#(if stepVar=='speed'):
             width=windSpeedSpecs[2]
             edges = np.arange(*windSpeedSpecs)
             xLabel = "Wind Speed (m/s)"
-        
-        # Get Data
-        # This still needsto be added, the below is wrong
-        
-        
+            col = self.wsCol
+                
         # Histograms
         plt.clf()
-        sns.set_theme(style="darkgrid")
+        sns.set_theme(style="white")
+        sns.despine()
         
         fig, axs = plt.subplots(nrows=1, ncols=2, sharex=True, 
                                 sharey=True, figsize=(10,5), 
                                 layout='constrained')
         
          
-        h1 = sns.histplot(dfBinned, x=stepVar,
+        h1 = sns.histplot(self.df, x=col,kde=True,
                           stat='density', thresh=None,
-                           binwidth = width, ax=axs[1], linewidth=1)
+                           binwidth = width, ax=axs[1])
 
-        h0 = sns.histplot(x=ppgSamplingDists[stepVar],
+        h0 = sns.histplot(bsPooled, x=col,kde=True,
                           stat='density', thresh=None,
-                           binwidth=width, ax=axs[0], linewidth=1)
+                           binwidth=width, ax=axs[0])
          
 
          ### Tick marks at multiples of 5 and 1
         for ax in axs:
-             ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
-             ax.yaxis.set_major_locator(mticker.MultipleLocator(.05))
-             ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
-             ax.yaxis.set_minor_locator(mticker.MultipleLocator(.01))
+             # ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
+             # ax.yaxis.set_major_locator(mticker.MultipleLocator(.05))
+             # ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
+             # ax.yaxis.set_minor_locator(mticker.MultipleLocator(.01))
              ax.tick_params(which="major", bottom=True, length=7, 
                             color='#4C4C4C', axis='x', left=True)
              ax.tick_params(which="minor", bottom=True, length=3,
@@ -1004,7 +1037,7 @@ class energyGain():
         fig.suptitle("Densities ", fontsize=17)
         plt.show()
         
-        
+         
         # Sampling distribution by bin
         #sns.violinplot(data=df, x="age", y="alive", cut=0)
         
@@ -1015,7 +1048,7 @@ class energyGain():
                             dfBinned,
                             stepVars,
                              windDirectionSpecs, windSpeedSpecs, colors):
-        breakpoint()#####
+         #####
         ppgSamplingDists = bsEstimateDict['ppg sampling distributions']
         
         ppgSummary = bsEstimateDict['percent power gain']
@@ -1031,7 +1064,7 @@ class energyGain():
         speedEdges = np.arange(*windSpeedSpecs)
         
     
-        breakpoint()#####
+        #####
         ## Plotting   
         fig, axs = plt.subplots(nrows=1, ncols=2, 
                                 sharex=True, sharey=True, 
@@ -1092,17 +1125,16 @@ class energyGain():
                              ["Confidence Interval Widths", "SE Method", "Percentile Method"]])
         
         idxs = [(iS,iD) for iS in range(speedEdges.size) for iD in range(directionEdges.size)]
-        breakpoint()#############
+         #############
         
         start1096 = default_timer()
         for dfSummary in [ppgSummary, cprSummary]:
             print("Doing stuff for new metric") 
             mCenterMean,mCenterMed,mVarSE,mVarIQR, mPosNegCI, mPosNegPerc,mIWperc,mIWci = [np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float) for i in range(8)]
             ### Just in case indices are out of order
-            try:
-                dfSummary.index = dfSummary.index.reorder_levels(order=['directionBinLowerBound','speedBinLowerBound'])
-            except AttributeError:
-                breakpoint()
+            dfSummary.index = dfSummary.index.reorder_levels(order=['directionBinLowerBound','speedBinLowerBound'])
+            
+                 
             print("filling matrices")
             start1105 = default_timer()
             for idx in idxs:

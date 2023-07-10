@@ -1,7 +1,9 @@
 # Private things
+Ablaincourt-LT-climate-80m.csv
 models.py
 windTS
 windTSfull
+wind_timeseries_processing.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
