@@ -923,12 +923,7 @@ class energyGain():
             self.bootstrapDiagnostics(bsEstimateDict=resultDict,
                                       dfBinned=dfBinned,
                                       windDirectionSpecs=windDirectionSpecs,
-                                      windSpeedSpecs=windSpeedSpecs,
-                                      colors=['cmr.iceburn',
-                                              'cubehelix',
-                                              sns.color_palette("coolwarm_r",
-                                                                as_cmap=True),
-                                              'cubehelix'])
+                                      windSpeedSpecs=windSpeedSpecs)
             
         if not retainReps:
             resultDict.pop('reps')
@@ -936,8 +931,8 @@ class energyGain():
         return resultDict
     
     def bootstrapDiagnostics(self, bsEstimateDict, dfBinned,
-                             windDirectionSpecs=None, windSpeedSpecs=None,
-                             colors=['turbo', 'turbo','turbo','turbo']):
+                             windDirectionSpecs=None, windSpeedSpecs=None, 
+                             histplotKWS=None):
         # Check for other commonalities that can be moved here
        
         stepVars = []
@@ -945,19 +940,25 @@ class energyGain():
             stepVars.append(var)     
             
         if len(stepVars)==2:
+            if histplotKWS is None:
+                histplotKWS = {'linewidth':1,
+                               'cmap': sns.color_palette("rocket_r", 
+                                                         as_cmap=True)}
             self.__bsDiagnostics2d__(bsEstimateDict=bsEstimateDict,
                                      dfBinned=dfBinned,
                                      stepVars=stepVars,
                                      windDirectionSpecs=windDirectionSpecs,
                                      windSpeedSpecs=windSpeedSpecs,
-                                     colors=colors)
+                                     histplotKWS=histplotKWS)
         else:#(if len(stepVars)==1)
+            if histplotKWS is None:
+                histplotKWS = {'thresh':None}
             self.__bsDiagnostics1d__(bsEstimateDict=bsEstimateDict,
                                      stepVar=stepVars,
                                      dfBinned=dfBinned,
                                      windDirectionSpecs=windDirectionSpecs,
                                      windSpeedSpecs=windSpeedSpecs,
-                                     colors=colors)
+                                     histplotKWS=histplotKWS)
             
 
         return None 
@@ -966,7 +967,6 @@ class energyGain():
                             dfBinned,
                             stepVar,
                             windDirectionSpecs=None, windSpeedSpecs=None, 
-                            colors=['turbo', 'turbo','turbo','turbo'],
                             kdeKWS={'bw_adjust':2},
                             histplotKWS={'thresh':None}):
         
@@ -1047,8 +1047,15 @@ class energyGain():
                             dfBinned,
                             stepVars,
                              windDirectionSpecs, windSpeedSpecs, 
-                             histplotKWS = {'linewidth':1}):
+                             histplotKWS = {'linewidth':1,
+                                            'cmap': sns.color_palette("rocket_r", 
+                                                                      as_cmap=True)}):
          #####
+        colors = ['cmr.iceburn',
+                  'cubehelix',
+                  sns.color_palette("coolwarm_r",as_cmap=True),
+                  'cubehelix']
+        
         ppgSamplingDists = bsEstimateDict['ppg sampling distributions']
         
         ppgSummary = bsEstimateDict['percent power gain']
