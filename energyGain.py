@@ -598,9 +598,43 @@ class energyGain():
         
         return df
     
+    def aep(self, windDirectionSpecs=None, windSpeedSpecs=None,
+                hours=8760, useReference=None, df=None):
+        
+        if self.wdCol is None:
+            self.setWD()
+            
+        # Set wind speed if necessary
+        if self.wsCol is None:
+            self.setWS()
+            
+        if windDirectionSpecs is None:
+            windDirectionSpecs = self.defaultWindDirectionSpecs
+        windDirectionBin = windDirectionSpecs[0:2]
+            
+        if windSpeedSpecs is None:
+            windSpeedSpecs = self.defaultWindSpeedSpecs
+        windSpeedBin = windSpeedSpecs[0:2]
+            
+        if useReference is None:
+            useReference = self.useReference
+            
+        if df is None:
+             df = self.computeAll(stepVars=["speed","direction"],
+                                  windDirectionSpecs=windDirectionSpecs,
+                                  windSpeedSpecs=windSpeedSpecs,
+                                  df=df,
+                                  useReference = useReference)
+        
+        df["aepContribution"] = np.multiply(df[('averagePower', 'test', 'baseline')],
+                                                    df[('freq', '', '')])
+        
+        return hours*np.nansum(df["aepContribution"])
+        
+    
     # Fix comments later
-    def aepGain(self, windDirectionSpecs=None,windSpeedSpecs=None,
-                hours=8760, aepMethod=1, absolute=False, useReference=None,df=None):
+    def aepGain(self, windDirectionSpecs=None, windSpeedSpecs=None,
+                hours=8760, aepMethod=1, absolute=False, useReference=None, df=None):
         """
         Calculates AEP gain  
 
