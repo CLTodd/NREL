@@ -17,7 +17,7 @@ from timeit import default_timer
 import pandas as pd
 from flasc.dataframe_operations import dataframe_manipulations as dfm 
 pd.options.mode.chained_assignment = None
-
+import pdb
 
 # For the smarteole experiment #
 
@@ -125,13 +125,14 @@ class energyGain():
         return None
     
     def __dfLonger__(self):
-        df = self.df
+        df = self.df.copy()
+        breakpoint()
         powerColumns = ["pow_{:03.0f}".format(number) for number in self.referenceTurbines + self.testTurbines]
         keep = powerColumns + [self.wdCol, self.wsCol, "time"]
-        df[keep].melt(value_vars=powerColumns,
+        df = df[keep].melt(value_vars=powerColumns,
                       value_name="power",
                       var_name="turbine", 
-                      id_vars=['time', 'wd_smarteole', 'ws_smarteole'])
+                      id_vars=['time', self.wdCol, self.wsCol])
         df.set_index(df["time"],inplace=True, drop=True)
         self.dfLong = df
         return None
@@ -575,7 +576,6 @@ class energyGain():
                                                              df[('numObvs', 'reference', 'baseline')])),
                                            axis=2)[0]
         
-        #breakpoint()
         # Same for both AEP methods
         if self.pmf is None:
             N = np.nansum(df["totalNumObvs"])
@@ -724,6 +724,9 @@ class energyGain():
         aep = hours*np.nansum(df[('aepGainContribution', '', '')])    
         #print(aep)
         return (df, aep)
+    
+    def TNOAverageFarmPower(self):
+        return None
     
     def bootstrapSamples(self, B=1000, seed=None, pooled=True):
         
