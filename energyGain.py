@@ -11,11 +11,11 @@ import matplotlib.ticker as mticker
 from mpl_toolkits.axes_grid1 import AxesGrid
 import numpy as np
 import seaborn as sns
+import pdb
 import cmasher as cmr 
 from timeit import default_timer
 import pandas as pd
-from flasc.dataframe_operations import dataframe_manipulations as dfm
-from wind_timeseries_processing import pmf_albaincourt
+from flasc.dataframe_operations import dataframe_manipulations as dfm 
 pd.options.mode.chained_assignment = None
 
 
@@ -931,7 +931,7 @@ class energyGain():
                                               'cubehelix'])
             
         if not retainReps:
-            resultDict.pop['reps']
+            resultDict.pop('reps')
             return resultDict
         return resultDict
     
@@ -966,7 +966,9 @@ class energyGain():
                             dfBinned,
                             stepVar,
                             windDirectionSpecs=None, windSpeedSpecs=None, 
-                            colors=['turbo', 'turbo','turbo','turbo']):
+                            colors=['turbo', 'turbo','turbo','turbo'],
+                            kdeKWS={'bw_adjust':2},
+                            histplotKWS={'thresh':None}):
         
         ppgSamplingDists = bsEstimateDict['ppg sampling distributions']
         ppgSummary = bsEstimateDict["percent power gain"]
@@ -993,29 +995,26 @@ class energyGain():
                 
         # Histograms
         plt.clf()
-        sns.set_theme(style="white")
-        sns.despine()
+        sns.set_theme(style="whitegrid")
         
         fig, axs = plt.subplots(nrows=1, ncols=2, sharex=True, 
                                 sharey=True, figsize=(10,5), 
                                 layout='constrained')
         
          
-        h1 = sns.histplot(self.df, x=col,kde=True,
-                          stat='density', thresh=None,
-                           binwidth = width, ax=axs[1])
+        h1 = sns.histplot(self.df, x=col,
+                          stat='density',
+                          binwidth = width, ax=axs[1],
+                          kde_kws=kdeKWS, **histplotKWS)
 
-        h0 = sns.histplot(bsPooled, x=col,kde=True,
-                          stat='density', thresh=None,
-                           binwidth=width, ax=axs[0])
+        h0 = sns.histplot(bsPooled, x=col,
+                          stat='density',
+                          binwidth=width, ax=axs[0],
+                          kde_kws=kdeKWS, **histplotKWS)
          
 
          ### Tick marks at multiples of 5 and 1
         for ax in axs:
-             # ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
-             # ax.yaxis.set_major_locator(mticker.MultipleLocator(.05))
-             # ax.xaxis.set_minor_locator(mticker.MultipleLocator(1)) 
-             # ax.yaxis.set_minor_locator(mticker.MultipleLocator(.01))
              ax.tick_params(which="major", bottom=True, length=7, 
                             color='#4C4C4C', axis='x', left=True)
              ax.tick_params(which="minor", bottom=True, length=3,
@@ -1047,7 +1046,8 @@ class energyGain():
     def __bsDiagnostics2d__(self, bsEstimateDict,
                             dfBinned,
                             stepVars,
-                             windDirectionSpecs, windSpeedSpecs, colors):
+                             windDirectionSpecs, windSpeedSpecs, 
+                             histplotKWS = {'linewidth':1}):
          #####
         ppgSamplingDists = bsEstimateDict['ppg sampling distributions']
         
@@ -1076,13 +1076,11 @@ class energyGain():
         
         h1=sns.histplot(self.df, x=self.wdCol, y=self.wsCol,
                       cbar=True, stat='density', thresh=None,
-                      binwidth = width, ax=axs[1], linewidth=1,
-                      cmap=sns.color_palette("rocket_r", as_cmap=True))
+                      binwidth = width, ax=axs[1], **histplotKWS)
         
         h0=sns.histplot(bsPooled, x=self.wdCol, y=self.wsCol,
                       cbar=True, stat='density', thresh=None,
-                      binwidth = width, ax=axs[0], linewidth=1,
-                      cmap=sns.color_palette("rocket_r", as_cmap=True))
+                      binwidth = width, ax=axs[0], **histplotKWS)
         
         for i in range(2):
             axs[i].tick_params(which="major", bottom=True, length=5)
@@ -1233,7 +1231,8 @@ class energyGain():
         return None
     
     # Seems inefficient 
-    def lineplotBE(self, dfSummary=None, repsArray=None, windDirectionSpecs=None, windSpeedSpecs=None, 
+    def lineplotBE(self, dfSummary=None, repsArray=None, windDirectionSpecs=None, 
+                   windSpeedSpecs=None, repsPooled = None, 
              stepVar="direction", useReference=True, **BEargs):
         """
         windDirectionSpecs: list of length 3, specifications for wind direction
@@ -1256,7 +1255,7 @@ class energyGain():
             dfSummary=self.bootstrapEstimate(stepVars=stepVar,
                                    windDirectionSpecs=windDirectionSpecs,
                                    windSpeedSpecs=windSpeedSpecs,
-                                   repsArray=repsArray,
+                                   repsPooled=repsPooled,
                                    metric="percentPowerGain", 
                                    useReference=useReference,
                                    diagnose=False,
@@ -1293,7 +1292,7 @@ class energyGain():
         else:
             xAxis = u"Wind Direction (\N{DEGREE SIGN})"
             title = f"Wind Speeds {windSpeedSpecs[0]} to {windSpeedSpecs[1]} m/s"
-        fig.supxlabel(xAxis, fontsize=13) #unicode formatted
+        fig.supxlabel(xAxis, fontsize=13)
         fig.supylabel(f"{metric} bootstrap centers",fontsize=13)
         fig.suptitle(title, fontsize=17)
         plt.show()
