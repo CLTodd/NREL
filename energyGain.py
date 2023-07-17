@@ -752,7 +752,7 @@ class energyGain():
         # Convert to list if needed
         if type(stepVars) is str:
             stepVars = list([stepVars])
-            
+        
         df = self.binAdder(stepVars=stepVars,
                            windDirectionSpecs=windDirectionSpecs,
                            windSpeedSpecs=windSpeedSpecs, 
@@ -760,16 +760,14 @@ class energyGain():
                            df=None)
         
 
-        # TNO does not use reference turbines
 
         powerColumns = ["pow_{:03.0f}".format(number) for number in self.testTurbines]
-
         stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
         groupVarCols = stepVarCols[:]
         groupVarCols.append('turbine')
         cols = powerColumns[:] + stepVarCols[:] + [self.wdCol, self.wsCol, 'time']
         rcm = False
-        
+    
         dfTemp = df.copy()
         
         if controlMode == 'both':
@@ -779,8 +777,9 @@ class energyGain():
         elif controlMode in ['baseline','controlled']:
             dfTemp = dfTemp.loc[df['control_mode']==controlMode]
               
+        # Get ony the columns with power measurements    
         dfPow = dfTemp[cols]
-        
+        # Reshape
         dfBinnedLong = self.binAll(retainControlMode=rcm,
                                    stepVars = stepVars,
                                    retainTurbineLabel=False,
@@ -788,11 +787,8 @@ class energyGain():
                                    group=False,
                                    df=dfPow,
                                    refTurbines=[])
-        
+        # Get turbine-specific stats
         dfBinnedLong = dfBinnedLong.sort_values(by=['turbine'])
-        
-
-        
         dfBinnedTurbineStats = dfBinnedLong.groupby(by=groupVarCols).agg(averageTurbinePower=pd.NamedAgg(column='power',
                                                                                       aggfunc=np.mean),
                                                                          varTurbinePower=pd.NamedAgg(column='power',
@@ -806,9 +802,6 @@ class energyGain():
                                                                dfBinnedTurbineStats['nTurbineObvs'])
         
         dfBinnedTurbineStats['seTurbinePower'] = np.sqrt(dfBinnedTurbineStats['varAvgTurbinePower'])
-        
-    
-            
         
             
         resultDict = {'dfTurbine': dfBinnedTurbineStats}
@@ -855,22 +848,16 @@ class energyGain():
         dfFarm = dfTurbine.groupby(groupByCols).agg(averageFarmPower=pd.NamedAgg(column='averageTurbinePower',
                                                                                  aggfunc=np.sum),
                                                     nTurbs = pd.NamedAgg(column='averageTurbinePower',
-                                                                         aggfunc='count'))
-        
+                                                                         aggfunc='count'),
+                                                    sumVarAvgTurbinePower = pd.NamedAgg(column='varAvgTurbinePower',
+                                                                         aggfunc=np.sum))
+       
         dfFarmVar = TNOatpDict['dfFarm']
-        
+        dfFarm = dfFarm.merge(dfFarmVar, left_index=True, right_index=True)
+        dfFarm['sdFarmPower'] = np.sqrt(dfFarm['varFarmPower'])
         
         
         None
-    
-    def __TNOvarAvgFarmPowerDict__(self, dfBinnedTurbineStats, stepVars, turbineCovMat):
-        # sum of variance for all average farm powers
-        
-        varAvgFarmPower = dfBinnedTurbineStats.groupby(by=stepVars).agg(sumVarAvgTurbPower=pd.NamedAgg(column='varAvgTurbinePower',
-                                                                                      aggfunc=np.sum))
-        
-        
-        return None
     
     
     def __TNOvarFarmPowerDict__(self, dfBinnedTurbineStats, stepVars, stepVarCols, powerColumns, dfTemp):
@@ -881,11 +868,13 @@ class energyGain():
             levels.append(i[:nvars])
             
         covMats = np.ndarray(0, dtype=np.ndarray)
-        sumCovs = np.ndarray(0, dtype=float)
+        covAvgPowerMats = np.ndarray(0, dtype=np.ndarray)
+        sumcovAvgPower = np.ndarray(0, dtype=float)
         nMats = np.ndarray(0, dtype=np.ndarray)
         
         # Need to compute the sum of all pairwise covariances for all the turbines in a  given wind direction 
         farmPowerVar = {}
+        farmAvgPowerVar = {}
 
         if nvars==2:
             speedIDX = dfBinnedTurbineStats.index.names.index('speedBinLowerBound')
@@ -910,37 +899,57 @@ class energyGain():
             covMat = np.full(shape=(shape[1], shape[1]), fill_value=0, dtype=float)
             nMat = np.full(shape=(shape[1], shape[1]), fill_value=0, dtype=int)
             
-            colComboIdxs = np.trui_indices(n=shape[1], m=shape[1], k=1)
+            
+            
+            colComboIdxs = np.trui_indices(n=shape[1], m=shape[1], k=0)
             numCombos = colComboIdxs[0].size
             
-            # This will leave the diagonal as nans for now (lower triangle can stay nans)
+            
+            # This will leave the diagonal alone for now
             for combo in range(numCombos):
                 col1idx = colComboIdxs[0][combo]
                 col2idx = colComboIdxs[1][combo]
                 
-                # Data frame of just the two turbines in question
-                dfCurrent2Turbs = dfCurrent[:,[col1idx, col2idx]]
-                dfCurrent2Turbs = dfCurrent2Turbs.dropna()
-                covMat2Turbs = dfCurrent2Turbs.cov(ddof=1)
-                turbCov = covMat2Turbs.iloc[1,1]
-                nTurbPairs = dfCurrent2Turbs.shape[0]
-                covMat[col1idx, col2idx] = turbCov
-                nMat[col1idx, col2idx] = nTurbPairs
+                # Could have used the k=1 argument in triu_indices but I still needed to access the number of rows for the individual turbines
+                
+                if col1idx==col2idx:
+                    nTurbPairs = dfCurrent[:,col1idx].shape[0]
+                else:
+                    # Data frame of just the two turbines in question
+                    dfCurrent2Turbs = dfCurrent[:,[col1idx, col2idx]]
+                    dfCurrent2Turbs = dfCurrent2Turbs.dropna()
+                    covMat2Turbs = dfCurrent2Turbs.cov(ddof=1)
+                    turbCov = covMat2Turbs.iloc[0,1]
+                    nTurbPairs = dfCurrent2Turbs.shape[0]
+                    # Upper triangle
+                    covMat[col1idx, col2idx] = turbCov
+                    nMat[col1idx, col2idx] = nTurbPairs
+                    #Lower triangle
+                    covMat[col2idx, col1idx]
+                
+                nMat[col2idx, col1idx] = nTurbPairs
+                
+                
             
             # Fill the diagonals with variances
             variances = dfCurrent.var(axis=0, skipna=True, ddof=1)
             np.fill_diagonal(covMat, val = np.asarray(variances))
             
+            covMatAvgTurbPower = np.divide(covMat, nMat)
+            np.fill_diagonal(covMatAvgTurbPower, val = np.asarray(variances))
+                          
             # Save the covariance matrix and numPairs matrix for this wind condition bin
             covMats = np.append(covMats, covMat)
             nMats = np.append(nMats, nMat)
+            covAvgPowerMats = np.append(covAvgPowerMats, covMatAvgTurbPower)
             
+            farmAvgPowerVar[key] = np.sum(covAvgPowerMats)
             farmPowerVar[key] = np.sum(covMat)
             
         
         df = self.__TNOvarFarmPowerDictToDf__(dct=farmPowerVar, stepVars = stepVars)
         
-        return {'varFarmPower': df, 'covTurbinePower': covMats, 'nTurbinePairs': nMats}
+        return {'varFarmPower': df, 'covTurbinePower': covMats, 'nTurbinePairs': nMats, 'varAvgFarmPower': farmAvgPowerVar}
     
     def __TNOvarFarmPowerDictToDf__(self, dct, stepVars):
 
@@ -981,51 +990,7 @@ class energyGain():
         return farmPowerVarDF
             
     
-    def TNOaverageFarmPower(self, controlMode, 
-                            stepVars=['direction','speed'],
-                            windDirectionSpecs=None,
-                            windSpeedSpecs=None, tnoATPdict=None):
-        
-        if windDirectionSpecs is None:
-            windDirectionSpecs = self.defaultWindDirectionSpecs
-            
-        if windSpeedSpecs is None:
-            windSpeedSpecs = self.defaultWindSpeedSpecs
-        
-        # Convert to list if needed
-        if type(stepVars) is str:
-            stepVars = list([stepVars])
-            
-        
-        if tnoATPdict is None:
-            tnoATPdict = self.TNOaverageTurbinePower(controlMode=controlMode, 
-                            stepVars=stepVars,
-                            windDirectionSpecs=windDirectionSpecs,
-                            windSpeedSpecs=windSpeedSpecs)
-            
-        dfTurbine = tnoATPdict['dfTurbine']
-        
-        groupVarCols = list(dfTurbine.index.names)
-        turbineIDX = groupVarCols.index('turbine')
-        groupVarCols.pop(turbineIDX)
-        
-        dfFarm = dfTurbine.groupby(by=groupVarCols).agg(averageFarmPower=pd.NamedAgg(column='averageTurbinePower',
-                                                                                      aggfunc=np.sum),
-                                                        nTurbs =  pd.NamedAgg(column="averageTurbinePower",
-                                                                            aggfunc='count'),
-                                                        nObvs = pd.NamedAgg(column="nTurbineObvs",
-                                                                            aggfunc=np.sum))
-        
-        
-        
-        dfFarm = dfFarm.merge(tnoATPdict['dfFarm'], left_index=True, right_index=True)
-        dfFarm['sdFarmPower'] = np.sqrt(dfFarm['varFarmPower'])
-        
-        # SE is 
-        
-        
-        return dfFarm
-    
+  
     
     
     def TNOpowerRatio(self, stepVars=['direction','speed'],
