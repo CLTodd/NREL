@@ -126,6 +126,39 @@ class energyGain():
         self.__dfLonger__()
         return None
     
+    def __empiricalPMF__(self,df):
+        idx = df.index
+        stepVars = idx.names
+        if len(stepVars)==2:
+            df = df.reorder_levels(["directionBinLowerBound", "speedBinLowerBound"])
+            histObject = np.histogram2d(x=self.df.loc[self.wdCol],
+                                       y=self.df.loc[self.wsCol],
+                                       bins=[np.asarray(idx.levels[0]), 
+                                             np.asarray(idx.levels[1])],
+                                       density=True)
+            speedBinLowerBound = np.ndarray(0)
+            directionBinLowerBound = np.ndarray(0)
+            density = np.ndarray(0)
+            for directionBin in range(len(histObject[1])):
+                for speedBin in range(len(histObject[2])):
+                    density = np.concatenate(density, histObject[0][directionBin, speedBin])
+                    directionBinLowerBound = np.concatenate(directionBinLowerBound, directionBin)
+                    speedBinLowerBound = np.concatenate(speedBinLowerBound, speedBin)
+            
+            pmf = pd.DataFrame({'directionBinLowerBound':directionBinLowerBound,
+                                'speedBinLowerBound':speedBinLowerBound,
+                                'binDensity':density})
+            
+            
+        # Doesn't work for 1d case right now
+        else:
+            None
+        
+        return pmf
+        
+        
+            
+    
     def __dfLonger__(self):
         df = self.df.copy()
       
@@ -968,7 +1001,8 @@ class energyGain():
                 'number non-missing pairs matrix': nTurbPowerPairsMat, 
                 'columns used': list(df)}
     
-    def TNOaverageTurbinePowerCovarianceMatrix(self, df=None, covTurbPowerMat = None, nTurbPowerPairsMat = None, variances=None, returnCovTurbPower=None):
+    def TNOaverageTurbinePowerCovarianceMatrix(self, df=None, covTurbPowerMat = None, 
+                                               TurbPowerPairsMat = None, variances=None, returnCovTurbPower=None):
         
         if returnCovTurbPower is None:
             returnCovTurbPower = False
@@ -1161,6 +1195,109 @@ class energyGain():
         farmStats['sePowerRatio']=np.sqrt(farmStats['varPowerRatioEst'])
         
         return farmStats
+    
+    def TNOexpectedPowerProduction(self, dfTNOpowerRatio, controlModeNumber=1):
+        """
+        This essentailly calculate the numerator or denominator for TNO's 
+        version of AEP
+        
+        Some differences from the TNO report:
+            
+        The TNO report calls this a 'weighted average power production', 
+        but the formula they use is essentially one for the expected value of a 
+        random variable with a defined probability function, so I'm calling this
+        Expected Power Production (see equations 4.23-4.25 in the TNO report).
+        I should maybe also mention that I haven't been too concious of consistent 
+        terminology for expected values versus averages in the rest of this module.
+        
+        The TNO report suggests two methods for computing the weights, one of 
+        which is based on the wind condition distributions for  the duraction of the AWC campaign.
+        Here, the weights are essemtially whatever is assigned to the PMF attribute.
+        This **could** be emprically derived from the campaign, but is empirically 
+        derived from long term site-specific wind data in the SMARTE-OLE example.
+        
+        
+        The TNO report seems to require that the weights be based on the joint
+        distribution of both wind speed and direction. The PMF attribute can 
+        be a marginal distribution, so we don't have that requirement here. 
+        Of course, a marginal distribution is only appropriate when the bins are 
+        incrementing over one variable and aggregated over the rest. 
+        There is currently not a built-in check for this.
+          
+        Parameters
+        ----------
+        dfTNOpowerRatio : pandas data frame
+            The data frame that is returned by a call to TNOpowerRatio.
+        
+        
+        Returns
+        -------
+        Float
+
+        """
+        # If there is no joint PMF provided, use the empirical frequencies for the campaign
+        if self.pmf is None:
+            # empirical PMF behavioris currently less than ideal
+            pmf = self.__empiricalPMF__(dfTNOpowerRatio)
+            pd.dfTNOpowerRatio.merge(pmf, how='left', 
+                                     left_on=[f'{var}_1' for var in dfTNOpowerRatio.index.names],
+                                     right_on=[var for var in dfTNOpowerRatio.index.names])
+        
+        else:
+            dfTNOpowerRatio['binDensity'] = self.pmf(dfTNOpowerRatio)
+        
+        avgAEPterms = np.multiply(dfTNOpowerRatio['binDensity'],
+                                  dfTNOpowerRatio[f'averageFarmPower_{controlModeNumber}'])
+            
+        return np.nansum(avgAEPterms)
+    
+    def TNOannualPowerRatio(self, dfTNOpowerRatio):
+
+        # Annual Power Ratio
+        aap1 = self.TNOexpectedPowerProduction(dfTNOpowerRatio, controlModeNumber=1)
+        aap2 = self.TNOexpectedPowerProduction(dfTNOpowerRatio, controlModeNumber=2)
+        apr = aap1/aap2        
+
+        if self.pmf is None:
+            # empirical PMF behavioris currently less than ideal
+            pmf = self.__empiricalPMF__(dfTNOpowerRatio)
+            pd.dfTNOpowerRatio.merge(pmf, how='left', 
+                                     left_on=[f'{var}_1' for var in dfTNOpowerRatio.index.names],
+                                     right_on=[var for var in dfTNOpowerRatio.index.names])
+        else:
+            dfTNOpowerRatio['binDensity'] = self.pmf(dfTNOpowerRatio)
+        
+        
+        # Variance, TNO equation 4.28
+        dfTNOpowerRatio['binDensitySquared'] = np.multiply(dfTNOpowerRatio['binDensity'],
+                                                           dfTNOpowerRatio['binDensity'])
+        firstProduct = np.multiply(dfTNOpowerRatio['varFarmPower_1'], 
+                                   dfTNOpowerRatio['binDensitySquared'])
+        secondProduct = np.multiply(dfTNOpowerRatio['varFarmPower_2'],
+                                    dfTNOpowerRatio['binDensitySquared'])*(apr**2)
+        summation = np.add(firstProduct, secondProduct)
+        var = summation/(aap2**2)
+        sd = np.sqrt(var)
+                                   
+        #Standard error 
+        firstProduct2 = np.multiply(dfTNOpowerRatio['varAvgFarmPower_1'], 
+                                   dfTNOpowerRatio['binDensitySquared'])
+        secondProduct2 = np.multiply(dfTNOpowerRatio['varAvgFarmPower_2'],
+                                    dfTNOpowerRatio['binDensitySquared'])*(apr**2)
+        summation2 = np.add(firstProduct2, secondProduct2)
+        se2 = summation2/(aap2**2)
+        se = np.sqrt(se2)
+        
+        dct = {"Annual Power Ratio estimate": apr,
+               "variance of Annual Power Ratio": var,
+               "standard deviation of Annual Power Ratio": sd,
+               "variance of Annual Power Ratio estimate": se2,
+               "standard error of Annual Power Ratio": se}
+        
+        print(dct)
+        
+        return dct
+    
     
     def bootstrapSamples(self, B=1000, seed=None, pooled=True):
         
