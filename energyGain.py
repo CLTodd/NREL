@@ -1294,7 +1294,8 @@ class energyGain():
                "variance of Annual Power Ratio estimate": se2,
                "standard error of Annual Power Ratio": se}
         
-        print(dct)
+        for key in dct:
+            print(f'{key}: dct[key]')
         
         return dct
     
