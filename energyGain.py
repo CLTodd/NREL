@@ -1275,7 +1275,7 @@ class energyGain():
                                    dfTNOpowerRatio['binDensitySquared'])
         secondProduct = np.multiply(dfTNOpowerRatio['varFarmPower_2'],
                                     dfTNOpowerRatio['binDensitySquared'])*(apr**2)
-        summation = np.add(firstProduct, secondProduct)
+        summation = np.nansum(np.add(firstProduct, secondProduct))
         var = summation/(aap2**2)
         sd = np.sqrt(var)
                                    
@@ -1284,7 +1284,7 @@ class energyGain():
                                    dfTNOpowerRatio['binDensitySquared'])
         secondProduct2 = np.multiply(dfTNOpowerRatio['varAvgFarmPower_2'],
                                     dfTNOpowerRatio['binDensitySquared'])*(apr**2)
-        summation2 = np.add(firstProduct2, secondProduct2)
+        summation2 = np.nansum(np.add(firstProduct2, secondProduct2))
         se2 = summation2/(aap2**2)
         se = np.sqrt(se2)
         
