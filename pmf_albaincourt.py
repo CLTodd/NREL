@@ -41,6 +41,7 @@ def jointPMF_albaincourt(df):
     if len(indices)==2:
         df = df.reorder_levels(["directionBinLowerBound", "speedBinLowerBound"], axis=0)
         pmf = pd.read_pickle("jointPMFdf_albaincourt")
+        # This does not change the order of the rows
         pmf = pmf.reorder_levels(["directionBinLowerBound", "speedBinLowerBound"])
     # Marginal PMF for wind speed
     elif indices[0]=='speedBinLowerBound':
