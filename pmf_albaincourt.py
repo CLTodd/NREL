@@ -10,10 +10,15 @@ import numpy as np
 def jointPMF_albaincourt(df):
     """
     Joint wind speed/direction PMF for the SMARTE-OLE sight, based on long-run frequency data.
-    Long run frequency data was used to essentially create 1 joint and 2 marginal PMF lookup tables.
-    The data is not publibly availible, but this function is public so that users can see what
-    type of PMF the energyGain module expects: a function that will take a dataframe that has
-    wind conditions as indices and returns an ordered array of PMF values.
+        Long run frequency data was used to essentially create 1 joint and 2 marginal PMF lookup tables.
+        The data is not publibly availible, but this function is public so that users can see what
+        type of PMF the energyGain module expects: a function that will take a dataframe that has
+        wind conditions as indices and returns an ordered array of PMF values.
+    
+    This particular PMF is less than ideal in at least one way: 
+        it cannot dynamially resize the wind condition bins and recalculate the PMF based on the new bins.
+        For now, I'm just accepting this since, for the majority of the duration of my work, 
+        we focused on fixed bin widths of 1.
 
     Parameters
     ----------
