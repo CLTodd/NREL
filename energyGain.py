@@ -818,8 +818,7 @@ class energyGain():
                            copy=True, 
                            df=None)
         
-
-
+        
         powerColumns = ["pow_{:03.0f}".format(number) for number in self.testTurbines]
         stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
         groupVarCols = stepVarCols[:]
@@ -1140,7 +1139,11 @@ class energyGain():
         farmPowerVarDF = pd.DataFrame(dct)
             
         # Merging later is easier if this is an index
-        farmPowerVarDF.index = pd.MultiIndex.from_arrays([farmPowerVarDF[f'{var}BinLowerBound'] for var in stepVars])
+        if len(stepVars)==2:
+            farmPowerVarDF.index = pd.MultiIndex.from_arrays([farmPowerVarDF[f'{var}BinLowerBound'] for var in stepVars])
+        else:
+            
+            farmPowerVarDF.index = pd.Index(farmPowerVarDF[f'{stepVars[0]}BinLowerBound'])
         
         return farmPowerVarDF
             
