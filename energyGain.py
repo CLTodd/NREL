@@ -1199,7 +1199,7 @@ class energyGain():
         
         return farmStats
     
-    def TNOexpectedPowerProduction(self, dfTNOpowerRatio, controlModeNumber=1):
+    def TNOexpectedPowerProduction(self, dfTNOpowerRatio, controlModeNumber=1, narm=False):
         """
         This essentailly calculate the numerator or denominator for TNO's 
         version of AEP
@@ -1249,6 +1249,10 @@ class energyGain():
         else:
             dfTNOpowerRatio['binDensity'] = self.pmf(dfTNOpowerRatio)
         
+        if narm:
+            dfTNOpowerRatio = dfTNOpowerRatio.loc[(~dfTNOpowerRatio['averageFarmPower_1'].isna()) & 
+                                                                    (~dfTNOpowerRatio['averageFarmPower_2'].isna())]
+        
         avgAEPterms = np.multiply(dfTNOpowerRatio['binDensity'],
                                   dfTNOpowerRatio[f'averageFarmPower_{controlModeNumber}'])
             
@@ -1257,8 +1261,8 @@ class energyGain():
     def TNOannualPowerRatio(self, dfTNOpowerRatio):
 
         # Annual Power Ratio
-        aap1 = self.TNOexpectedPowerProduction(dfTNOpowerRatio, controlModeNumber=1)
-        aap2 = self.TNOexpectedPowerProduction(dfTNOpowerRatio, controlModeNumber=2)
+        aap1 = self.TNOexpectedPowerProduction(dfTNOpowerRatio, controlModeNumber=1, narm=True)
+        aap2 = self.TNOexpectedPowerProduction(dfTNOpowerRatio, controlModeNumber=2, narm=True)
         apr = aap1/aap2        
 
         if self.pmf is None:
