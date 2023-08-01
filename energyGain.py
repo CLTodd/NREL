@@ -3,56 +3,89 @@
 Created on Fri Jun  9 13:03:40 2023
 
 @author: ctodd
+
+Methods for calculating power ratios, associated metrics, 
+and uncertainty on these metrics
 """
 import re
 import matplotlib.pyplot as plt
-import matplotlib.colors as mplc
 import matplotlib.ticker as mticker
-from mpl_toolkits.axes_grid1 import AxesGrid
 import numpy as np
 import seaborn as sns
-import pdb
-import cmasher as cmr 
-from timeit import default_timer
 import pandas as pd
-from flasc.dataframe_operations import dataframe_manipulations as dfm 
 pd.options.mode.chained_assignment = None
-import pdb
 
-# For the smarteole experiment #
+from timeit import default_timer
+from flasc.dataframe_operations import dataframe_manipulations as dfm 
 
 class energyGain():
     
     
-    def __init__(self, df, dfUpstream, testTurbines=[], refTurbines=[],
-                 wdCol=None, wsCol=None, pmf=None,
-                 defaultWindDirectionSpecs = [0,360,1],
-                 defaultWindSpeedSpecs=[0,20,1], useReference=True):
+    def __init__(self, 
+                 dfScada, 
+                 dfUpstream,
+                 defaultDirectionBinLowerBound = None,
+                 defaultSpeedBinLowerBound = None,
+                 wdColScada='wd', 
+                 wsColScada='ws', 
+                 dfWind=None,
+                 wdColWind=None, 
+                 wsColWind=None,
+                 testTurbines = [],
+                 refTurbines = [],
+                 useReference=True):
         """
+        Creates an energyGain object
+        
         Parameters
         ----------
-        df : pandas dataframe
-            formatted as in flasc example
+        dfScada : pandas dataframe
+            scada data, formatted as in flasc example
+        
         dfUpstream : pandas dataframe
             output from ftools.get_upstream_turbs_floris, data frame listing which turbines are upstream for each wind speed and direction
+        
+        defaultDirectionBinLowerBound : numpy array, optional
+            Lower bounds for the wind direction for wind direction bins in degrees.
+            The default None means we will aggregate over all wind directions 
+            for any calculations that use wind condition. 
+            Must be monotonic increasing and on [0,360).
+        
+        defaultSpeedBinLowerBound : numpy array, optional
+            Lower bounds for the wind speed for wind speed bins.
+            The default None means we will aggregate over all wind speeds 
+            for any calculations that use wind condition. 
+            Must be monotonic increasing and non-negative.
+        
+        wdColScada : string
+            Name of the column in the scada data that you want to use as the 
+            'true' wind direction.
+            Defaults to 'wd' (the column output by other FLASC functionality)
+        
+        wsColScada : string
+            Name of the column in the scada data that you want to use as the 
+            'true' wind direction.
+            Defaults to 'ws' (the column output by other FLASC functionality)
+        
+        dfWind: pandas dataframe
+            data frame with a column for wind direction measurements and/or a 
+            column for mind speed measurements, taken at (assumed uniform) 
+            time stamps
+        
+        wdColWind : string
+            Name of the wind direction column in the wind condition time series
+            Defaults to None in case you want to ignore direction
+            
+        wsColWind : string
+            Name of the wind speed column in the wind condition time series
+            Defaults to None in case you  want to ignore speed
+        
         testTurbines : list of integers
             Turbine numbers to be considered test turbines, based on 3-digit turbine numbering convention starting at 0 but without the leading zeroes
+        
         refTurbines : list of integers
             Turbine numbers to be considered reference turbines, based on 3-digit turbine numbering convention starting at 0 but without the leading zeroes
-        wdCol : string
-            Name of the column in df that you want to use as the 'true' wind direction.
-            Defaults to 'wd' (the column output by other FLASC functionality)
-        wsCol : string
-            Name of the column in df that you want to use as the 'true' wind direction.
-            Defaults to 'ws' (the column output by other FLASC functionality)
-        defaultWindDirectionSpecs : list of floats with length 3, optional
-            Specifications for the sector of wind directions you are interested in -- [lower bound (inclusive), upper bound (exclusive), bin width]. 
-            These specifications will only be used to construct wind condition bins within various methods if conditions are specified in the call.
-            The default is [0,20,1].
-        defaultWindSpeedSpecs : list of floats with length 3, optional
-            Specifications for the range of wind speeds you are interested in -- [lower bound (inclusive), upper bound (exclusive), bin width]. 
-            These specifications will only be used to construct wind condition bins within various methods if conditions are specified in the call.
-            The default is [0,20,1].
+        
         useReference : boolean, optional
             Whether to use reference turbines for various energy uplift calculations. 
             This will only be used if a method is called without specifying useReference in the call.
@@ -60,107 +93,311 @@ class energyGain():
 
         Returns
         -------
+        energyGain object
+        """
+        # Object attributes
+        self.scada = dfScada
+        self.dfUpstream = dfUpstream
+        self.wind = dfWind
+        self.testTurbines = testTurbines
+        self.referenceTurbines = refTurbines
+        self.windDirectionMin = np.min(defaultDirectionBinLowerBound)
+        
+        ## Defaults for various calculations
+        self.directionBinLowerBound = defaultDirectionBinLowerBound
+        self.speedBinLowerBound = defaultSpeedBinLowerBound
+        self.useReference = useReference
+        self.wdCol = wdColScada
+        self.wsCol = wsColScada
+        if wdColScada is None:
+            self.setWD() 
+        if wsColScada is None:
+            self.setWS()
+        
+        
+        ## Calculates default PMF based on long term time series of wind data
+        self.pmf = None
+        
+        self.setBins(directionBinLowerBound=defaultDirectionBinLowerBound, 
+                     speedBinLowerBound=defaultSpeedBinLowerBound,
+                     wdColWind=wdColWind,
+                     wsColWind=wsColWind)
+        
+        
+        ## Other things that might be useful
+        self.testTurbines.sort()
+        self.referenceTurbines.sort()
+        self.scadaLong=None
+        if dfScada is not None:
+            self.__dfLonger__()
+            self.allTurbines = [int(re.sub("\D+","",colname)) for colname in list(dfScada) if re.match('^pow_\d+', colname)]
+        else:
+            self.allTurbines = None
+
+    def setWD(self, colname=None):
+        """
+        Setting the column to be referenced for wind direction 
+        ('consensus' wind direction) if one was provided. If none was provided,
+        calculates concesus wind direction and keeps the default column named 'wd'.
+
+        Parameters
+        ----------
+        colname : string, optional
+            Name ofthe column that contains the 'consensus' or 'reference' 
+            wind direction. The default is None.
+
+        Returns
+        -------
         None.
 
         """
-        # Object attributes
-        self.df = df
-        self.dfUpstream = dfUpstream
-        self.testTurbines = testTurbines
-        self.referenceTurbines = refTurbines
         
-        # Defaults for various calculations
-        self.defaultWindDirectionSpecs = defaultWindDirectionSpecs
-        self.defaultWindSpeedSpecs = defaultWindSpeedSpecs
-        self.useReference = useReference
-        self.wdCol = wdCol
-        self.wsCol = wsCol
-        self.pmf=pmf
+        if colname is not None:
+            self.wdCol = colname
+            return None
         
-        if self.wdCol == None:
-            self.setWD() 
-        if self.wsCol==None:
-            self.setWS()
-        
-        # I don't rember why I did this
-        # Other things that might be useful
-        self.testTurbines.sort()
-        self.referenceTurbines.sort()
-        self.dfLong=None
-        if df is not None:
-            self.__dfLonger__()
-            self.allTurbines = [int(re.sub("\D+","",colname)) for colname in list(df) if re.match('^pow_\d+', colname)]
-        else:
-            self.allTurbines = None
-            
-            
+        # Set-difference to find the list of turbines that should be excluded from this wind speed calculation
+        self.scada = dfm.set_wd_by_all_turbines(self.scada)
+        # Set reference direction for the data frame
+        self.wdCol = "wd"
+        # This will need to be redone if the wind directions change
+        self.__dfLonger__()
+        return None
 
     def setWS(self, colname=None):
         """
-        Setting the column to be referenced for wind speed in none was provided
-        
+        Setting the column to be referenced for wind speed 
+        ('consensus' wind speed) if one was provided. If none was provided,
+        calculates concesus wind speed and keeps the default column named 'ws'.
+
+        Parameters
+        ----------
+        colname : string, optional
+            Name ofthe column that contains the 'consensus' or 'reference' wind speeds.
+            The default is None.
+
+        Returns
+        -------
+        None.
+
         """
+
         if colname != None:
             self.wsCol = colname
             return None
         
         # Set-difference to find the list of turbines that should be excluded from this wind speed calculation
         exc = list(set(self.allTurbines) - set(self.referenceTurbines)) # should this be changed to allow something other than reference turbines 
-        # Set reference wind speed and direction for the data frame
-        self.df = dfm.set_ws_by_upstream_turbines(self.df, self.dfUpstream, exclude_turbs=exc)
+        # Set reference wind speed for the data frame
+        self.scada = dfm.set_ws_by_upstream_turbines(self.scada, self.dfUpstream, exclude_turbs=exc)
         self.wsCol = "ws"
+        # This will need to be redone if the wind speeds change
         self.__dfLonger__()
         return None
     
-    def setWD(self, colname=None):
+    def setBins(self, 
+                directionBinLowerBound=None,
+                speedBinLowerBound=None,
+                wdColWind=None,
+                wsColWind=None,
+                plot=False, 
+                returnData=False):
         """
-        Setting the column to be referenced for wind direction if none was provided
+        Updates the object attributes for wind speed and direction,
+        re-calculates the pmf based on these updates, and updates the PMF 
+        attribute
+
+        Parameters
+        ----------
+        
+        directionBinLowerBound : numpy array, optional
+            Left edge of the wind direction bin in degrees. This is the inclusive edge.
+            Must be monotonic increasing with all entries on [0,360).
+            The default is None in case you want to ignore direction.
+            
+        speedBinLowerBound : numpy array, optional
+            Left edge of the wind speed bin. This is the inclusive edge.
+            Must be monotonic increasing and completely non-negative.
+            The default is None in case you want to ignore speed.
+            
+        dfWind : pandas DataFrame
+            wind condition time series;
+            data frame with the long term time series information on 
+            wind speed and/or direction. Default is none in case you want to
+            use the current associated wind condition time series
+            
+        wdColWind : string
+            Name of the wind direction column in the wind condition time series
+            Defaults to None in case you want to ignore direction
+            
+        wsColWind : string
+            Name of the wind speed column in the wind condition time series
+            Defaults to None in case you  want to ignore speed
+        
+        plot : boolean, optional
+            Whether you want to plot the experimental distribution using these wind bins.
+            The default is False.
+            
+        returnData : boolean, optional
+            whether you want to return the histogram data from the PMF calculations.
+            The default is False.
+
+        Returns
+        -------
+        None or the PMF according to the new wind condition bins
+
         """
+        # Update default object attributes
+        self.speedBinLowerBound = speedBinLowerBound
+        self.directionBinLowerBound = directionBinLowerBound
         
-        if colname != None:
-            self.wdCol = colname
-            return None
-        
-        self.df = dfm.set_wd_by_all_turbines(self.df)
-        self.wdCol = "wd"
-        self.__dfLonger__()
-        return None
-    
-    def __empiricalPMF__(self,df):
-        idx = df.index
-        stepVars = idx.names
-        if len(stepVars)==2:
-            df = df.reorder_levels(["directionBinLowerBound", "speedBinLowerBound"])
-            histObject = np.histogram2d(x=self.df.loc[self.wdCol],
-                                       y=self.df.loc[self.wsCol],
-                                       bins=[np.asarray(idx.levels[0]), 
-                                             np.asarray(idx.levels[1])],
-                                       density=True)
-            speedBinLowerBound = np.ndarray(0)
-            directionBinLowerBound = np.ndarray(0)
-            density = np.ndarray(0)
-            for directionBin in range(len(histObject[1])):
-                for speedBin in range(len(histObject[2])):
-                    density = np.concatenate(density, histObject[0][directionBin, speedBin])
-                    directionBinLowerBound = np.concatenate(directionBinLowerBound, directionBin)
-                    speedBinLowerBound = np.concatenate(speedBinLowerBound, speedBin)
-            
-            pmf = pd.DataFrame({'directionBinLowerBound':directionBinLowerBound,
-                                'speedBinLowerBound':speedBinLowerBound,
-                                'binDensity':density})
-            
-            
-        # Doesn't work for 1d case right now
+        # If there is no dedicated long term wind condition time series, 
+        # calculate PMF based on the data
+        if self.wind is None:
+            df=self.scada
+            wdColWind = self.wdCol
+            wsColWind=self.wsCol
         else:
-            None
+            df=self.wind
         
-        return pmf
+        self.pmf = self.pmfCalculator(dfWind = df,
+                                      speedBinLowerBound=speedBinLowerBound,
+                                      directionBinLowerBound=directionBinLowerBound,
+                                      wdColWind=wdColWind,
+                                      wsColWind=wsColWind)
         
-        
+        if plot:
+            self.windRose()
             
+        if returnData:
+            return self.pmf
+ 
+        return None
     
+    def pmfCalculator(self, 
+                      dfWind, 
+                      speedBinLowerBound=None,
+                      directionBinLowerBound=None, 
+                      wdColWind=None, 
+                      wsColWind=None):
+        """
+        Calculates the joint or marginal PMF based on the provided 
+        wind condition bins
+
+        Parameters
+        ----------
+        dfWind : pandas dataframe
+            data frame with a column for wind direction measurements and/or a 
+            column for mind speed measurements, taken at (assumed uniform) 
+            time stamps
+        
+        directionBinLowerBound : numpy array of numerics, optional
+            Left edge of the wind direction bin in degrees. This is the inclusive edge.
+            Should not contain any elements <0 or > 360
+            The default is None in case you want to ignore over direction.
+            
+        speedBinLowerBound : numpy array of numerics, optional
+            Left edge of the wind speed bin. This is the inclusive edge.
+            Should not contain any elements <0
+            The default is None in case you want to ignore speed.
+            
+        wdColWind : string
+            Name of the wind direction column in the wind condition time series
+            Defaults to None in case you want to ignore direction
+            
+        wsColWind : string
+            Name of the wind speed column in the wind condition time series
+            Defaults to None in case you  want to ignore speed
+
+        Returns
+        -------
+        freq : pandas Series 
+            Joint or marginal PMF based on the new wind condition bins.
+            Will have an index or multiIndex of the wind condition bins
+        """
+        
+        if wdColWind is None:
+            wdColWind = 'wd'
+            
+        if wsColWind is None:
+            wsColWind = 'ws'
+
+        if speedBinLowerBound is None: ## speed is None
+
+            
+            if directionBinLowerBound is None: ## Both are None
+                freqs = None
+            else: ## Just speed is None
+                
+                # Calculate PMF based on only wind direction
+                hist = np.histogram(self.wind[wdColWind],
+                                    bins=directionBinLowerBound)
+                N = np.sum(hist[0])
+                freqs = pd.Series(hist[0]/N)
+                freqs.index = hist[1]
+                freqs.inex.names = ["directionBinLowerBound"]
+        else: ## Speed is not None
+            
+            if directionBinLowerBound is None: ## speed is not none but direction is none
+                
+                # Assign bin edges
+                # Just the direction bin is None, so 
+                # Calculate the PMF based on only wind speed
+                hist = np.histogram(self.wind[wsColWind], 
+                                    bins=speedBinLowerBound)
+                N = np.sum(hist[0])
+                freqs = pd.Series(hist[0]/N)
+                freqs.index = hist[1]
+                freqs.index.names = ["speedBinLowerBound"]
+                
+            else: ## Neither are None
+                # Get bin counts
+                hist = np.histogram2d(x=self.wind[wdColWind], 
+                                      y=self.wind[wsColWind],
+                                      bins=(directionBinLowerBound,
+                                            speedBinLowerBound)) 
+                N = np.sum(hist[0])
+                freq = np.full(shape=0, fill_value=0)
+                speeds = np.full(shape=0, fill_value=np.nan)
+                directions = np.full(shape=0, fill_value=np.nan)
+                
+                # Calculating joint PMF while keeping track of each variable
+                d=0
+                nDirs = hist[1].size-1
+                nSpeeds =  hist[2].size-1
+
+                while d < nDirs:
+                    direction = hist[1][d]
+                    s=0
+
+                    while s < nSpeeds: 
+                        speed = hist[2][s]
+                        # Calculate bin frequency
+                        prop = hist[0][d][s]/N 
+                        freq = np.concatenate((freq, [prop]))
+                        speeds = np.concatenate((speeds, [speed]))
+                        directions = np.concatenate((directions, [direction]))
+                        s +=1  
+
+                    d +=1
+                    
+                freq = pd.Series(freq)
+                freq.index = pd.MultiIndex.from_arrays([directions, speeds],
+                                          names=('directionBinLowerBound',
+                                                 'speedBinLowerBound'))
+        
+        return freq                
+            
     def __dfLonger__(self):
-        df = self.df.copy()
+        """
+        Makes a long version of he SCADA data readily available 
+
+        Returns
+        -------
+        None.
+
+        """
+        df = self.scada.copy()
       
         powerColumns = ["pow_{:03.0f}".format(number) for number in self.referenceTurbines + self.testTurbines]
         keep = powerColumns + [self.wdCol, self.wsCol, "time"]
@@ -169,31 +406,71 @@ class energyGain():
                       var_name="turbine", 
                       id_vars=['time', self.wdCol, self.wsCol])
         df.set_index(df["time"],inplace=True, drop=True)
-        self.dfLong = df
+        self.scadaLong = df
         return None
                
     def setReference(self, lst):
+        """
+        Updates the list of reference turbines
+
+        Parameters
+        ----------
+        lst : list of integers
+            Turbine numbers to be considered reference turbines, 
+            based on 3-digit turbine numbering convention starting at 0 
+            but without the leading zeroes.
+
+        Returns
+        -------
+        None.
+
+        """ 
         self.referenceTurbines = lst
         self.__dfLonger__()
     
     def setTest(self, lst):
+        """
+        Updates the list of test turbines
+
+        Parameters
+        ----------
+        lst : list of integers
+            Turbine numbers to be considered test turbines, 
+            based on 3-digit turbine numbering convention starting at 0 
+            but without the leading zeroes.
+
+        Returns
+        -------
+        None.
+
+        """ 
         self.testTurbines = lst
         self.__dfLonger__()
     
-    def averagePower(self, windDirectionBin = None,
-                     windSpeedBin = None, 
-                     turbineList=None, controlMode="controlled",
-                     verbose=False):
+    def averagePower(self, 
+                     directionBinLowerBound = None,
+                     speedBinLowerBound = None, 
+                     turbineList=None, controlMode=None):
         """
-        Average Power for a specific wind direction bin and wind speed bin.
-        
-        windDirectionBin: list of length 2
-        windSpeedBin: list of length 2
-        controlMode: string, "baseline", "controlled", or "both"
-        wdToUse: string, name of the column with the reference wind direction.
-            Calculates a column named "wd" if None
-        wsToUse: string, name of the column with the reference wind speed.
-            Calculates a column named "ws" if None
+        Computes the average power for the given list of turbines under the given control mode.
+        Default computes average power over all turbines ignoring control mode
+
+        Parameters
+        ----------
+        directionBinLowerBound : TYPE, optional
+            DESCRIPTION. The default is None.
+        speedBinLowerBound : TYPE, optional
+            DESCRIPTION. The default is None.
+        turbineList : TYPE, optional
+            DESCRIPTION. The default is None.
+        controlMode : TYPE, optional
+            DESCRIPTION. The default is None.
+
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+
         """
         
         # Set wind direction if necessary
@@ -204,17 +481,17 @@ class energyGain():
         if self.wsCol is None:
             self.setWS()
             
-        if windDirectionBin is None:
-            windDirectionBin = self.defaultWindDirectionSpecs[0:2]
+        if directionBinLowerBound is None:
+            directionBinLowerBound = self.directionBinLowerBound
             
-        if windSpeedBin is None:
-            windSpeedBin = self.defaultWindSpeedSpecs[0:2]
+        if speedBinLowerBound is None:
+            speedBinLowerBound = self.speedBinLowerBound[0:2]
         
         # Select relevant rows
-        dfTemp = self.df.loc[ (self.df[self.wdCol]>= windDirectionBin[0]) &
-                          (self.df[self.wdCol]< windDirectionBin[1]) &
-                          (self.df[self.wsCol]>= windSpeedBin[0]) &
-                          (self.df[self.wsCol]< windSpeedBin[1])
+        dfTemp = self.scada.loc[ (self.scada[self.wdCol]>= windDirectionBin[0]) &
+                          (self.scada[self.wdCol]< windDirectionBin[1]) &
+                          (self.scada[self.wsCol]>= windSpeedBin[0]) &
+                          (self.scada[self.wsCol]< windSpeedBin[1])
                         ]
         
         # Filter for control mode if necessary
@@ -240,8 +517,8 @@ class energyGain():
      
         return avg
     
-    def powerRatio(self, windDirectionBin=None, windSpeedBin=None, controlMode=None, 
-                   useReference = True, verbose = False):
+    def powerRatio(self, windDirectionBin=None, windSpeedBin=None, 
+                   controlMode=None, useReference = True, verbose = False):
         """
         Power ratio for a specific wind direction bin and wind speed bin. 
         
@@ -425,7 +702,7 @@ class energyGain():
             If speed is not in stepVars, 3rd element gets ignored if it exists.
         stepVars: string ("speed" or "direction") or list of the possible strings.
             The variable(s) you want to increment by for the wind condition bins
-        copy: boolean, whether to simply return a copy of self.df (True) or to actually update self.df (False)
+        copy: boolean, whether to simply return a copy of self.scada (True) or to actually update self.scada (False)
             Default is true because rows outside of the specs will be deleted
         """
         if windDirectionSpecs is None:
@@ -439,7 +716,7 @@ class energyGain():
             stepVars = list([stepVars])
         
         if df is None:
-            df = self.df.copy()
+            df = self.scada.copy()
         
         # Bin assignment doesn't work correctly for conditons outside these bounds 
         df = df.loc[(df[self.wdCol]>=windDirectionSpecs[0]) & (df[self.wdCol]<windDirectionSpecs[1]) &
@@ -452,9 +729,9 @@ class energyGain():
         if "speed" in stepVars:
             df["speedBinLowerBound"] = (((df[self.wsCol]-windSpeedSpecs[0])//windSpeedSpecs[2])*windSpeedSpecs[2])+windSpeedSpecs[0]
         
-        # Update self.df if desired
+        # Update self.scada if desired
         if not copy:
-            self.df = df
+            self.scada = df
             
         # Return the copy with the bin columns
         return df
@@ -839,6 +1116,8 @@ class energyGain():
         dfPow = dfWithBins[cols]
         # Reshape
         dfBinnedLong = self.binAll(retainControlMode=rcm,
+                                   windDirectionSpecs=windDirectionSpecs,
+                                   windSpeedSpecs=windSpeedSpecs,
                                    stepVars = stepVars,
                                    retainTurbineLabel=False,
                                    retainTurbineNumbers=True,
@@ -1152,7 +1431,7 @@ class energyGain():
                             windDirectionSpecs=None,
                             windSpeedSpecs=None,
                             one='controlled',
-                            two='baseline'):
+                            two='baseline', seMultiplier=2):
         
         if windDirectionSpecs is None:
             windDirectionSpecs = self.defaultWindDirectionSpecs
@@ -1196,8 +1475,73 @@ class energyGain():
         
         farmStats['sdPowerRatio']=np.sqrt(farmStats['varPowerRatio'])
         farmStats['sePowerRatio']=np.sqrt(farmStats['varPowerRatioEst'])
+        farmStats['powerRatioCIlower'] = farmStats['powerRatioEstimate'] - seMultiplier*farmStats['sePowerRatio']
+        farmStats['powerRatioCIupper'] = farmStats['powerRatioEstimate'] + seMultiplier*farmStats['sePowerRatio']
         
         return farmStats
+    
+    def plot2DTNOpowerRatio(self, TNOprDF, windDirectionSpecs=None, windSpeedSpecs=None):
+        if windDirectionSpecs is None:
+            windDirectionSpecs = self.defaultWindDirectionSpecs
+            
+        if windSpeedSpecs is None:
+            windSpeedSpecs = self.defaultWindSpeedSpecs
+            
+        # Empty matrix to hold all possible combinations
+        directionEdges = np.arange(*windDirectionSpecs)
+        speedEdges = np.arange(*windSpeedSpecs)
+        matrix= np.full(shape=(speedEdges.size, directionEdges.size), fill_value=np.nan, dtype=float)
+        idxs = [(iS,iD) for iS in range(speedEdges.size) for iD in range(directionEdges.size)]
+        # Fill matrix
+        for idx in idxs:
+            try:
+
+                if TNOprDF.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['powerRatioCIupper']<1:
+                    matrix[idx[0], idx[1]] = -1
+
+                elif TNOprDF.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['powerRatioCIlower']>1:
+                    matrix[idx[0], idx[1]] = 1
+
+                elif pd.isna(TNOprDF.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['powerRatioCIlower'])==False and pd.isna(TNOprDF.loc[(directionEdges[idx[1]],speedEdges[idx[0]])]['powerRatioCIlower'])==False:
+                    matrix[idx[0], idx[1]] = 0
+            except KeyError:
+                continue
+        # plot matrix
+        plt.clf()
+        #sns.set_theme(style="whitegrid")
+        fig, ax = plt.subplots(figsize=(10,5), layout='constrained')
+    
+        ax=sns.heatmap(matrix,center=0, square=False, linewidths=1, 
+                           ax=ax, cbar=True, cbar_kws={"shrink": .8},
+                           annot=False, cmap=sns.color_palette("coolwarm_r",as_cmap=True), robust=True)
+
+
+        #ax.yaxis.set_minor_locator(mticker.MultipleLocator(0.5))
+        ax.invert_yaxis()
+        #ax.xaxis.set_minor_locator(mticker.MultipleLocator(0.5))
+        
+
+        
+        ax.tick_params(which="major", bottom=True, length=0, color='#4C4C4C', 
+                        grid_linewidth=0)
+        ax.tick_params(which="minor", bottom=True, length=10, color='black')
+        # #ax.set_xticklabels(xlabels, rotation=-90)
+        # #ax.set_yticklabels(ylabels, rotation=0)
+        ax.grid(which='major', visible=False, color='black',linestyle='-',
+                 linewidth=0)
+        ax.grid(which='minor', visible=True, color='black',linestyle='-',
+                 linewidth=1)
+
+        ax.tick_params(which="minor", bottom=True, length=0, color='white')
+    
+        ### Labels
+        fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})", fontsize=15) #unicode formatted
+        fig.supylabel("Wind Speed (m/s)",fontsize=15)
+        fig.suptitle("title", fontsize=17)
+        plt.show()
+        
+        
+        return None
     
     def TNOexpectedPowerProduction(self, dfTNOpowerRatio, controlModeNumber=1, narm=False):
         """
@@ -1302,7 +1646,7 @@ class energyGain():
                "standard error of Annual Power Ratio": se}
         
         for key in dct:
-            print(f'{key}: dct[key]')
+            print(f'{key}: {dct[key]}')
         
         return dct
     
@@ -1315,10 +1659,10 @@ class energyGain():
         
         prng = np.random.default_rng(seed=seed)
         
-        nrow = self.df.shape[0]
+        nrow = self.scada.shape[0]
          
         if pooled:
-            dfPooled= self.df.sample(n=nrow*B,
+            dfPooled= self.scada.sample(n=nrow*B,
                                 replace=True,
                                 random_state=prng)
             dfPooled = dfPooled.reset_index(drop=True)
@@ -1333,7 +1677,7 @@ class energyGain():
         else:
             samples = np.full(B, None, dtype=pd.core.frame.DataFrame)
             for rep in range(B):
-                dfTemp = self.df.sample(n=nrow,
+                dfTemp = self.scada.sample(n=nrow,
                                     replace=True,
                                     random_state=prng)
                 dfTemp.reset_index(drop=True,inplace=True)
@@ -1346,7 +1690,6 @@ class energyGain():
         
         return samples
      
-    # Need to completely rewrite this so that it works with computeAll
     def bootstrapEstimate(self, stepVars=["direction","speed"], 
                           windDirectionSpecs=None, windSpeedSpecs=None,
                           B=1000, seed=None, useReference=True,
@@ -1399,7 +1742,7 @@ class energyGain():
         # Setup empty array to hold the binned versions of each bootstrap simulation
        # bootstrapDFbinned = np.full(B, None, dtype=pd.core.frame.DataFrame)
         
-        nrow = self.df.shape[0]
+        nrow = self.scada.shape[0]
         rowidx = np.arange(0,(nrow*B)+1,nrow)
         for bootstrap in range(B):
             
@@ -1618,7 +1961,7 @@ class energyGain():
                                 layout='constrained')
         
          
-        h1 = sns.histplot(self.df, x=col,
+        h1 = sns.histplot(self.scada, x=col,
                           stat='density',
                           binwidth = width, ax=axs[1],
                           kde_kws=kdeKWS, **histplotKWS)
@@ -1646,8 +1989,8 @@ class energyGain():
                        color='#4C4C4C', axis='y', left=True)
            
         ### Labels
-        axs[1].set_title(f"Real Data (size={self.df.shape[0]})")
-        axs[0].set_title(f"Pooled Bootstrap Samples (size={self.df.shape[0]}; nReps = {ppgSummary['nReps'].iloc[1]})")
+        axs[1].set_title(f"Real Data (size={self.scada.shape[0]})")
+        axs[0].set_title(f"Pooled Bootstrap Samples (size={self.scada.shape[0]}; nReps = {ppgSummary['nReps'].iloc[1]})")
         fig.supxlabel(xLabel, fontsize=15) #unicode formatted
         fig.suptitle("Densities ", fontsize=17)
         plt.show()
@@ -1697,7 +2040,7 @@ class energyGain():
         
         
         
-        h1=sns.histplot(self.df, x=self.wdCol, y=self.wsCol,
+        h1=sns.histplot(self.scada, x=self.wdCol, y=self.wsCol,
                       cbar=True, stat='density', thresh=None,
                       binwidth = width, ax=axs[1], **histplotKWS)
         
@@ -1714,8 +2057,8 @@ class energyGain():
         
         
         ### Labels
-        axs[1].set_title(f"Real Data (size={self.df.shape[0]})")
-        axs[0].set_title(f"Pooled Bootstrap Samples (size={self.df.shape[0]}; nReps = {ppgSummary['nReps'].iloc[1]})")
+        axs[1].set_title(f"Real Data (size={self.scada.shape[0]})")
+        axs[0].set_title(f"Pooled Bootstrap Samples (size={self.scada.shape[0]}; nReps = {ppgSummary['nReps'].iloc[1]})")
         fig.supxlabel(u"Wind Direction (\N{DEGREE SIGN})", fontsize=15) #unicode formatted
         fig.supylabel("Wind Speed (m/s)",fontsize=15)
         fig.suptitle("Densities ", fontsize=17)
@@ -1921,3 +2264,50 @@ class energyGain():
         plt.show()
         
         return None    
+    
+    def windRose(self, data=None,
+                 directionBinLowerBound=None,
+                 speedBinLowerBound=None):
+        """
+        INCOMPLETE - do not use
+
+        Parameters
+        ----------
+        data : TYPE, optional
+            DESCRIPTION. The default is None.
+        directionBinLowerBound : TYPE, optional
+            DESCRIPTION. The default is None.
+        speedBinLowerBound : TYPE, optional
+            DESCRIPTION. The default is None.
+
+        Returns
+        -------
+        None.
+
+        """
+        hist = np.histogram(self.scada[self.wdCol], bins= directionBinLowerBound)
+        counts = hist[0]
+        
+        directionBins = directionBinLowerBound[:]
+        directionBins.append(360)
+        
+        widths = [directionBins[i] - directionBins[i-1] for i in range(1,len(directionBins))]
+        binMidpoints = [(widths[i]/2)+directionBins[i] for i in range(len(widths))]
+        
+
+        ax = plt.subplot(projection='polar')
+        ax.set_theta_zero_location("N", offset=(90)*np.pi/180)
+        ax.set_theta_direction("clockwise")
+        ax.set_thetagrids(angles=[0, 45, 90, 135, 180,225,270,315],
+                          labels=["N", "N E","E","S E","S","S W","W","N W"])
+
+        ax.bar([b*(np.pi/180) for b in binMidpoints], 
+               heights = counts,
+               width=[(np.pi/180)*w for w in widths], 
+               bottom=0.0, 
+               lw=1,
+               ec="black")
+        
+        
+        plt.show()
+        return None
