@@ -114,6 +114,10 @@ class energyGain():
         self.upstream = None
         self.wind = wind
         self.useReference = useReference
+        
+        ################ Temporary
+        self.speedBin
+        ####################
 
         # Setting attributes
         self.setScada(scada, wdColScada, wsColScada)
@@ -509,7 +513,7 @@ class energyGain():
         return freqs
 
     # ***
-    def pmf(self, direction=None, speed=None):
+    def pmf(self, direction=None, speed=None, df=None):
         """
         Returns the estimated probability of occurence for the wind condition 
         bin that contains the provided specs. Estimate is an empirical 
@@ -533,36 +537,51 @@ class energyGain():
             bin that contains the provided specs.
 
         """
-
+        
+        if df is not None:
+            vals = np.full(0,0)
+            for index in df.index:
+                if len(index)==2:
+                    prob = self.pmf(index[0],index[1])
+                else:
+                    # Fix this later!!
+                    None
+                vals = np.concatenate((vals,[prob]))
+            return vals
+                    
+        
         if direction is None and speed is None:
             return 'Specify a speed and/or direction'
 
         if direction is not None:
 
-            dirIdx = np.digitize(direction, self.directionBins)
+            dirIdx = np.digitize(direction, self.directionBins)-1
             directionBin = self.directionBins[dirIdx]
             key = directionBin
             print("Direction bin:", directionBin)
+            pmf = self.pmfDirection
 
         if speed is not None:
-            speedIdx = np.digitize(speed, self.speedBins)
+            speedIdx = np.digitize(speed, self.speedBins)-1
             speedBin = self.speedBins[speedIdx]
             key = speedBin
             print("Speed bin:", speedBin)
+            pmf=self.pmfSpeed
 
         if direction is not None and speed is not None:
-            if dirIdx == (self.directionBins.size-1) and speedIdx == (self.speedBins.size-1):
+            if dirIdx >= (self.directionBins.size-1) and speedIdx >= (self.speedBins.size-1):
                 "Wind conditions out of bounds of the bins"
                 return None
 
-            if dirIdx == (self.directionBins.size-1):
+            if dirIdx >= (self.directionBins.size-1):
                 "Direction out of bounds of wind condition bins,"
             # Joint PMF
             key = (directionBin, speedBin)
+            pmf=self.pmfJoint
 
         try:
-            prob = self.pmf[key]
-        except IndexError:
+            prob = pmf[key]
+        except KeyError:
             print("Frequencies not computed for this wind condition.")
             print("Re-define wind condition bins to include this wind condition.")
             prob = np.nan
@@ -570,6 +589,7 @@ class energyGain():
         return prob
 
     def scadaLonger(self, turbs='all', df=None):
+        
         
         if df is None:
             df = self.scada.copy()
@@ -1051,6 +1071,7 @@ class energyGain():
         if self.speedBins is not None:
             featuresToRetain.append('speedBin')
             stepVarCols.append('speedBin')
+
         if retainControlMode:
             featuresToRetain.append('control_mode')
         if retainTurbineLabel:
@@ -1059,7 +1080,7 @@ class energyGain():
             featuresToRetain.append('turbine')
              
         # Calculating average by group
-        breakpoint()
+       
         # if dropna:
             
         #     if retainTurbineNumbers:
@@ -1118,17 +1139,19 @@ class energyGain():
         #                                                               aggfunc=np.sum))
         
         
-        if retainTurbineNumbers:
-            dfGrouped = dfLong.groupby(by=featuresToRetain).agg(averagePower=pd.NamedAgg(column="power",
+        # if retainTurbineNumbers:
+        dfGrouped = dfLong.groupby(by=featuresToRetain).agg(averagePower=pd.NamedAgg(column="power",
                                                                                      aggfunc=np.nanmean),
+                                                            sumPower=pd.NamedAgg(column="power",
+                                                                                 aggfunc=np.sum),
                                                            numObvs=pd.NamedAgg(column="power",
                                                                                aggfunc='count'))
-        else:
-
-            dfGrouped = dfLong.groupby(by=featuresToRetain).agg(averagePower=pd.NamedAgg(column="totalFarmPower",
-                                                                                     aggfunc=np.nanmean),
-                                                           numObvs=pd.NamedAgg(column="totalFarmPower",
-                                                                               aggfunc='count'))
+        # else:
+            
+            # dfTotal = dfLong.groupby(by=featuresToRetain).agg(averagePower=pd.NamedAgg(column="totalFarmPower",
+            #                                                                          aggfunc=np.nanmean),
+            #                                                numObvs=pd.NamedAgg(column="totalFarmPower",
+            #                                                                    aggfunc='count'))
             
         
         # Convert grouping index into columns for easier pivoting
@@ -1138,9 +1161,13 @@ class energyGain():
         # Pivot wider
         if returnWide:
             optionalCols = list(set(featuresToRetain) - set(stepVarCols))
-
+            dfGrouped['averagePower'] = dfGrouped['averagePower'].copy()
+            dfGrouped['metric'] = 'averagePower'
+            optionalCols = ['metric'] + optionalCols
+            
             dfWide = dfGrouped.pivot(columns=optionalCols, index=stepVarCols,
                                        values='averagePower')
+            
             return dfWide
 
         # # Don't need these columns anymore since they are a part of the multi-index
@@ -1148,9 +1175,7 @@ class energyGain():
         return dfGrouped
 
     # Fix comments later
-    def computeAll(self, stepVars=["direction", "speed"],
-                   windDirectionSpecs=None, windSpeedSpecs=None,
-                   useReference=True, APdf=None, dropna=True):
+    def computeAll(self,useReference=True, dfAvgPower=None, dropna=True):
         """
         Computes all the things from the slides except AEP gain
 
@@ -1170,10 +1195,8 @@ class energyGain():
         df : pandas data frame
             Nicely formatted dataframe that can go directly into aepGain.
         """
-
-
-        if APdf is None:
-            APdf = self.averagePower(retainControlMode=True,
+        if dfAvgPower is None:
+            dfAvgPower = self.averagePower(retainControlMode=True,
                                      retainTurbineLabel=True,
                                      retainTurbineNumbers=False,
                                      filterBins=True,
@@ -1181,55 +1204,31 @@ class energyGain():
                                      returnWide=True)
 
         # Sometimes the order of the labels in this tuple seem to change and I haven't figured out why. This should fix the order.
-        APdf = APdf.reorder_levels([None, "turbineLabel", "control_mode"], axis=1)
+        dfAvgPower = dfAvgPower.reorder_levels(["metric","turbineLabel", "control_mode"], axis=1)
 
         if useReference:
-            df["powerRatioBaseline"] = np.divide(df[('averagePower', 'test', 'baseline')],
-                                                 df[('averagePower', 'reference', 'baseline')])
-            df["powerRatioControl"] = np.divide(df[('averagePower', 'test', 'controlled')],
-                                                df[('averagePower', 'reference', 'controlled')])
-            df["totalNumObvs"] = np.nansum(np.dstack((df[('numObvs', 'test', 'controlled')],
-                                                      df[('numObvs', 'reference',
-                                                          'controlled')],
-                                                      df[('numObvs', 'test',
-                                                          'baseline')],
-                                                      df[('numObvs', 'reference', 'baseline')])),
-                                           axis=2)[0]
+            dfAvgPower["powerRatioBaseline"] = np.divide(dfAvgPower[('averagePower', 'test', 'baseline')],
+                                                 dfAvgPower[('averagePower', 'reference', 'baseline')])
+            dfAvgPower["powerRatioControl"] = np.divide(dfAvgPower[('averagePower', 'test', 'controlled')],
+                                                dfAvgPower[('averagePower', 'reference', 'controlled')])
 
         else:
-            df["powerRatioBaseline"] = df[('averagePower', 'test', 'baseline')]
-            df["powerRatioControl"] = df[(
-                'averagePower', 'test', 'controlled')]
+            dfAvgPower["powerRatioBaseline"] = dfAvgPower[( 'averagePower', 'test', 'baseline')]
+            dfAvgPower["powerRatioControl"] = dfAvgPower[('averagePower', 'test', 'controlled')]
 
-            df["totalNumObvs"] = np.nansum(np.dstack((df[('numObvs', 'test', 'controlled')],
-                                                      df[('numObvs', 'test', 'baseline')])),
-                                           axis=2)[0]
 
-            df["totalNumObvsInclRef"] = np.nansum(np.dstack((df["totalNumObvs"],
-                                                             df[('numObvs', 'reference',
-                                                                 'controlled')],
-                                                             df[('numObvs', 'reference', 'baseline')])),
-                                                  axis=2)[0]
+        dfAvgPower["changeInPowerRatio"] = np.subtract(dfAvgPower['powerRatioControl'],
+                                               dfAvgPower['powerRatioBaseline'])
 
-        # Same for both AEP methods
-        if self.pmf is None:
-            N = np.nansum(df["totalNumObvs"])
-            df["freq"] = df["totalNumObvs"]/N
-        else:
-            df["freq"] = self.pmf(df)
-
-        df["changeInPowerRatio"] = np.subtract(df['powerRatioControl'],
-                                               df['powerRatioBaseline'])
-
-        df["percentPowerGain"] = np.divide(df["changeInPowerRatio"],
-                                           df['powerRatioControl'])
+        dfAvgPower["percentPowerGain"] = np.divide(dfAvgPower["changeInPowerRatio"],
+                                           dfAvgPower['powerRatioControl'])
 
         # Make columns out of the indices just because it's easier to see sometimes
-        stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
-        for var in stepVarCols:
-            df[var] = df.index.get_level_values(var)
+        # stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
+        # for var in stepVarCols:
+        #     df[var] = df.index.get_level_values(var)
 
-        return df
+        return dfAvgPower
 
     def aep(self, windDirectionSpecs=None, windSpeedSpecs=None,
             hours=8760, useReference=None, df=None):
@@ -1266,8 +1265,13 @@ class energyGain():
 
     # Fix comments later
 
-    def aepGain(self, windDirectionSpecs=None, windSpeedSpecs=None,
-                hours=8760, aepMethod=1, absolute=False, useReference=None, df=None):
+    def aepGain(self,
+                hours=8760, 
+                aepMethod=1, 
+                absolute=False, 
+                useReference=None, 
+                df=None,
+                dropna=False):
         """
         Calculates AEP gain  
 
@@ -1291,63 +1295,60 @@ class energyGain():
         AEP gain (float)
 
         """
-        if windDirectionSpecs is None:
-            windDirectionSpecs = self.defaultWindDirectionSpecs
-
-        if windSpeedSpecs is None:
-            windSpeedSpecs = self.defaultWindSpeedSpecs
 
         if useReference is None:
             useReference = self.useReference
-
+            
         if not useReference:
             # Both methods are equivalent when reference turbines aren't used,
             aepMethod = 1
 
+        
+
         # Calculate nicely formatted df if needed
         if df is None:
-            df = self.computeAll(stepVars=["speed", "direction"],
-                                 windDirectionSpecs=windDirectionSpecs,
-                                 windSpeedSpecs=windSpeedSpecs,
-                                 df=df,
-                                 useReference=useReference)
+            df = self.computeAll(useReference=useReference,
+                                 dfAvgPower=df, 
+                                 dropna=dropna)
 
         # Different AEP formulas
         if aepMethod == 1:
             if useReference:
                 df["aepGainContribution"] = np.multiply(np.multiply(df[('averagePower', 'test', 'baseline')],
                                                                     df[('percentPowerGain', '', '')]),
-                                                        df[('freq', '', '')])
+                                                        self.pmf(df=df))
             else:
                 df["aepGainContribution"] = np.multiply(
-                    df["changeInPowerRatio"], df[('freq', '', '')])
+                    df["changeInPowerRatio"], self.pmf(df=df))
 
             if not absolute:
                 denomTerms = np.multiply(
-                    df[('averagePower', 'test', 'baseline')], df[('freq', '', '')])
+                    df[('averagePower', 'test', 'baseline')], self.pmf(df=df))
 
         else:
-            # Couldn't find an element-wise weighted mean, so I did this
-            sumPowerRefBase = np.multiply(df[('averagePower', 'reference', 'baseline')],
-                                          df[('numObvs', 'reference', 'baseline')])
-            sumPowerRefcontrolled = np.multiply(df[('averagePower', 'reference', 'controlled')],
-                                                df[('numObvs', 'reference', 'controlled')])
-
-            sumPowerRef = np.nansum(
-                np.dstack((sumPowerRefBase, sumPowerRefcontrolled)), 2)[0]
-
-            numObvsRef = np.nansum(np.dstack((df[('numObvs', 'reference', 'controlled')], df[(
-                'numObvs', 'reference', 'baseline')])), 2)[0]
-
-            avgPowerRef = np.divide(sumPowerRef, numObvsRef)
+            
+            dfRef = self.averagePower(useReference=useReference,
+                                    dfAvgPower=None,
+                                    dropna=dropna,
+                                    retainControlMode=False)
+            dfRef = dfRef.reorder_levels(["metric","turbineLabel"], axis=1)
+            
+            avgPowerRef = np.full(0,0)
+            for index in df.index:
+                p = dfRef.loc[index, ('averagePower','reference')]
+                avgPowerRef = np.concatenate((avgPowerRef,[p]))
+                
+            
+            
+            
 
             df["aepGainContribution"] = np.multiply(np.multiply(avgPowerRef,
                                                                 df[('changeInPowerRatio', '', '')]),
-                                                    df[('freq', '', '')])
+                                                    self.pmf(df=df))
             if not absolute:
                 denomTerms = np.multiply(np.multiply(avgPowerRef,
                                                      df[('powerRatioBaseline', '', '')]),
-                                         df[('freq', '', '')])
+                                         self.pmf(df=df))
 
         if not absolute:
             # 'hours' here doesn't really represent hours,
@@ -1391,54 +1392,25 @@ class energyGain():
             DESCRIPTION.
 
         """
-
-        if windDirectionSpecs is None:
-            windDirectionSpecs = self.defaultWindDirectionSpecs
-
-        if windSpeedSpecs is None:
-            windSpeedSpecs = self.defaultWindSpeedSpecs
+        groupVarCols = ['turbine']
+        if self.directionBins is not None:
+            groupVarCols.append('directionBin')
+        if self.speedBins is not None:
+                groupVarCols.append('speedBin')
 
         if type(stepVars) is str:
             stepVars = list([stepVars])
-
-        df = self.binAdder(stepVars=stepVars,
-                           windDirectionSpecs=windDirectionSpecs,
-                           windSpeedSpecs=windSpeedSpecs,
-                           copy=True,
-                           df=None)
-
-        powerColumns = ["pow_{:03.0f}".format(
-            number) for number in self.testTurbines]
-        stepVarCols = ["{}BinLowerBound".format(var) for var in stepVars]
-        groupVarCols = stepVarCols[:]
-        groupVarCols.append('turbine')
-        cols = powerColumns[:] + stepVarCols[:] + \
-            [self.wdCol, self.wsCol, 'time']
-        rcm = False
-
-        dfWithBins = df.copy()
-
-        if controlMode == 'both':
-            cols.append("control_mode")
-            groupVarCols.append("control_mode")
-            rcm = True
-        elif controlMode in ['baseline', 'controlled']:
-            dfWithBins = dfWithBins.loc[df['control_mode'] == controlMode]
-
-        # Get only the columns with power measurements
-        dfPow = dfWithBins[cols]
-        # Reshape
-        dfBinnedLong = self.binAll(retainControlMode=rcm,
-                                   windDirectionSpecs=windDirectionSpecs,
-                                   windSpeedSpecs=windSpeedSpecs,
-                                   stepVars=stepVars,
-                                   retainTurbineLabel=False,
-                                   retainTurbineNumbers=True,
-                                   group=False,
-                                   df=dfPow,
-                                   refTurbines=[])
+        
+        
+        df = self.binAll(retainControlMode=True,
+                         retainTurbineLabel=True,
+                         retainTurbineNumbers=True,
+                         filterBins=True,
+                         long=True)
+        dfBinnedLong = df.loc[(df['turbineLabel']=='test') & df['control_mode']==controlMode]
+                   
         # Get turbine-specific summary stats
-        dfBinnedLong = dfBinnedLong.sort_values(by=['turbine'])
+        #dfBinnedLong = dfBinnedLong.sort_values(by=['turbine'])
         dfBinnedTurbineStats = dfBinnedLong.groupby(by=groupVarCols).agg(averageTurbinePower=pd.NamedAgg(column='power',
                                                                                                          aggfunc=np.mean),
                                                                          varTurbinePower=pd.NamedAgg(column='power',
@@ -1489,11 +1461,7 @@ class energyGain():
 
         """
 
-        if windDirectionSpecs is None:
-            windDirectionSpecs = self.defaultWindDirectionSpecs
 
-        if windSpeedSpecs is None:
-            windSpeedSpecs = self.defaultWindSpeedSpecs
 
         if type(stepVars) is str:
             stepVars = list([stepVars])
