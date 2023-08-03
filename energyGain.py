@@ -1008,9 +1008,13 @@ class energyGain():
             colsToKeep.append("control_mode")
         df = df.loc[:,colsToKeep + powerColumns]
         
+        df['totalFarmPower'] = df.loc[:,powerColumns].sum(1, skipna=True)
+        
         if not long:
-            df['totalPower'] = df.loc[:,powerColumns].sum(1, skipna=True)
+            
             return df
+        
+        colsToKeep.append("totalFarmPower")
         
         # Pivot Longer
         dfLong = df.melt(id_vars=colsToKeep,
@@ -1036,13 +1040,17 @@ class energyGain():
                       retainTurbineLabel=True, 
                       retainTurbineNumbers=False,
                       filterBins=True,
-                      dropna=True):
+                      dropna=True,
+                      returnWide=True):
 
         featuresToRetain = []
+        stepVarCols = []
         if self.directionBins is not None:
             featuresToRetain.append('directionBin')
+            stepVarCols.append('directionBin')
         if self.speedBins is not None:
             featuresToRetain.append('speedBin')
+            stepVarCols.append('speedBin')
         if retainControlMode:
             featuresToRetain.append('control_mode')
         if retainTurbineLabel:
@@ -1084,36 +1092,56 @@ class energyGain():
                               filterBins=filterBins,
                               long=True)
             
-        if not retainTurbineNumbers:
-            featuresToRetain.append('turbine')
+        # if not retainTurbineNumbers:
+        #     featuresToRetain.append('turbine')
             
-        dfTurbine = dfLong.groupby(by=featuresToRetain).agg(averageTurbinePower=pd.NamedAgg(column="power",
-                                                                                aggfunc=np.mean),
-                                                      numObvs=pd.NamedAgg(column="power",
-                                                                          aggfunc='count'))
-        dfGrouped = dfTurbine.copy()
+        # dfTurbine = dfLong.groupby(by=featuresToRetain).agg(averagePower=pd.NamedAgg(column="power",
+        #                                                                         aggfunc=np.mean),
+        #                                               numObvs=pd.NamedAgg(column="power",
+        #                                                                   aggfunc='count'))
+        # dfGrouped = dfTurbine.copy()
             
-        if not retainTurbineNumbers:
-            featuresToRetain.pop()
-            dfGrouped = dfTurbine.groupby(by=featuresToRetain).agg(averageFarmPower=pd.NamedAgg(column="averageTurbinePower",
-                                                                                aggfunc=np.nansum),
-                                                      numTurbines=pd.NamedAgg(column="averageTurbinePower",
-                                                                          aggfunc='count'),
-                                                      numObvs=pd.NamedAgg(column="numObvs",
-                                                                          aggfunc=np.sum))
+        # if not retainTurbineNumbers:
+        #     featuresToRetain.pop()
+        #     dfGrouped = dfTurbine.groupby(by=featuresToRetain).agg(averageFarmPower=pd.NamedAgg(column="averageTurbinePower",
+        #                                                                         aggfunc=np.nansum),
+        #                                               numTurbines=pd.NamedAgg(column="averageTurbinePower",
+        #                                                                   aggfunc='count'),
+        #                                               numObvs=pd.NamedAgg(column="numObvs",
+        #                                                                   aggfunc=np.sum))
             
-        breakpoint()
+        # dfGrouped = dfTurbine.groupby(by=featuresToRetain).agg(averageFarmPower=pd.NamedAgg(column="averageTurbinePower",
+        #                                                                     aggfunc=np.nansum),
+        #                                           numTurbines=pd.NamedAgg(column="averageTurbinePower",
+        #                                                               aggfunc='count'),
+        #                                           numObvs=pd.NamedAgg(column="numObvs",
+        #                                                               aggfunc=np.sum))
+        
+        
+        if retainTurbineNumbers:
+            dfGrouped = dfLong.groupby(by=featuresToRetain).agg(averagePower=pd.NamedAgg(column="power",
+                                                                                     aggfunc=np.nanmean),
+                                                           numObvs=pd.NamedAgg(column="power",
+                                                                               aggfunc='count'))
+        else:
+
+            dfGrouped = dfLong.groupby(by=featuresToRetain).agg(averagePower=pd.NamedAgg(column="totalFarmPower",
+                                                                                     aggfunc=np.nanmean),
+                                                           numObvs=pd.NamedAgg(column="totalFarmPower",
+                                                                               aggfunc='count'))
+            
+        
         # Convert grouping index into columns for easier pivoting
         for var in featuresToRetain:
             dfGrouped[var] = dfGrouped.index.get_level_values(var)
 
-        # # Pivot wider
-        # if returnWide:
-        #     optionalCols = list(set(colsToKeep) - set(stepVarCols))
+        # Pivot wider
+        if returnWide:
+            optionalCols = list(set(featuresToRetain) - set(stepVarCols))
 
-        #     dfWide = dfGrouped.pivot(columns=optionalCols, index=stepVarCols,
-        #                               values=['averagePower', 'numObvs'])
-        #     return dfWide
+            dfWide = dfGrouped.pivot(columns=optionalCols, index=stepVarCols,
+                                       values='averagePower')
+            return dfWide
 
         # # Don't need these columns anymore since they are a part of the multi-index
         # dfGrouped.drop(columns=colsToKeep, inplace=True)
@@ -1122,7 +1150,7 @@ class energyGain():
     # Fix comments later
     def computeAll(self, stepVars=["direction", "speed"],
                    windDirectionSpecs=None, windSpeedSpecs=None,
-                   useReference=True, df=None):
+                   useReference=True, APdf=None, dropna=True):
         """
         Computes all the things from the slides except AEP gain
 
@@ -1143,23 +1171,17 @@ class energyGain():
             Nicely formatted dataframe that can go directly into aepGain.
         """
 
-        if windDirectionSpecs is None:
-            windDirectionSpecs = self.defaultWindDirectionSpecs
 
-        if windSpeedSpecs is None:
-            windSpeedSpecs = self.defaultWindSpeedSpecs
-
-        if type(stepVars) is str:
-            stepVars = list([stepVars])
-
-        if df is None:
-            df = self.binAll(stepVars=stepVars,
-                             windDirectionSpecs=windDirectionSpecs,
-                             windSpeedSpecs=windSpeedSpecs,
-                             df=df)
+        if APdf is None:
+            APdf = self.averagePower(retainControlMode=True,
+                                     retainTurbineLabel=True,
+                                     retainTurbineNumbers=False,
+                                     filterBins=True,
+                                     dropna=dropna,
+                                     returnWide=True)
 
         # Sometimes the order of the labels in this tuple seem to change and I haven't figured out why. This should fix the order.
-        df = df.reorder_levels([None, "turbineLabel", "control_mode"], axis=1)
+        APdf = APdf.reorder_levels([None, "turbineLabel", "control_mode"], axis=1)
 
         if useReference:
             df["powerRatioBaseline"] = np.divide(df[('averagePower', 'test', 'baseline')],
